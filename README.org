@@ -9,7 +9,10 @@ API, a window system or a sound server. =Platform= carries the full input
 vocabulary: keyboard, pointer (absolute, relative and locked), touch as
 first-class events, and polled gamepads; =Audio= is Web Audio in the
 browser and an SDL3 mixer natively, with retained sounds and generational
-voice handles.
+voice handles. A whole program is an =App= — a title and one polymorphic
+scene function — and a backend *launcher* (=Offler.Native.App=,
+=Offler.Web.App=) constructs the renderer, platform and audio around it,
+so each entry point is a single =launch app= line.
 
 The model is *retained*, as bevy's is: meshes, textures and material assets
 are created once and referenced by typed handles; objects live in a scene
@@ -40,11 +43,12 @@ honours.
 
 * The examples
 
-Each example is one backend-agnostic =Scene.idr= plus three entry points —
-=MainGl2=, =MainGpu=, =Main= (native) — compiled separately so every build is
-monomorphic and no bundle carries another backend's code. The browser pages
-(=shapes.html= etc.) pick a bundle by URL; the footer button switches by
-navigating with =?r=webgpu=.
+Each example is one backend-agnostic =Scene.idr= exporting an =app : App=,
+plus three one-line entry points — =MainGl2=, =MainGpu=, =Main= (native) —
+each just =launch app= against its backend's launcher, compiled separately
+so every build is monomorphic and no bundle carries another backend's code.
+The browser pages (=shapes.html= etc.) pick a bundle by URL; the footer
+button switches by navigating with =?r=webgpu=.
 
 | example    | page          | demonstrates                                                             |
 |------------+---------------+--------------------------------------------------------------------------|
@@ -88,13 +92,16 @@ desktop adds.
 | =Offler.Picking=        | which thing is under the pointer: =pickRay= unprojection, bounds + ray tests, and the hover/press/click state machine — pure over =Camera=, the scene graph and the =Event= stream |
 | =Offler.Gfx.Platform=   | the =Platform= interface and the input =Event= vocabulary: keys, pointer (absolute + relative + lock), touch, wheel, polled =Gamepad= state |
 | =Offler.Audio=          | the =Audio= interface: retained sounds (=SoundPcm= / =SoundFile=), generational =Voice= handles, =Playback= (gain, pan, rate, =semitones=, loop) |
+| =Offler.App=            | =App= (a title and one rank-2 scene function that cannot name a backend), =Status=, =soundless= for scenes that play nothing |
 | =Offler.Web.Js=         | browser primitives: opaque handles, DOM, rAF, input listeners       |
 | =Offler.Web.Gl2/Gpu=    | the two browser backends                                            |
 | =Offler.Web.Platform=   | =Platform= over the DOM                                             |
 | =Offler.Web.Audio=      | =Audio= over Web Audio; resumes itself past the autoplay policy     |
+| =Offler.Web.App=        | =launchGl2= / =launchGpu=: page chrome, backend construction, and the async WebGPU adapter dance |
 | =Offler.Native.Wgpu=    | =Renderer= over the C shim                                          |
 | =Offler.Native.Platform= | =Platform= over SDL3                                               |
 | =Offler.Native.Audio=   | =Audio= over the SDL3 stream and the C mixer                        |
+| =Offler.Native.App=     | =launch=: SDL3 window, wgpu renderer and the mixer around any =App= |
 | =csrc/offler_native.c=  | SDL3 + wgpu-native; one function per =%foreign=, no scene logic     |
 | =csrc/offler_audio.c=   | the mixer: voices with generations, mixed on SDL's audio thread     |
 | =shaders/standard.*=    | GLSL ES 300 and WGSL; struct and =in= declarations are generated    |
@@ -140,7 +147,21 @@ desktop adds.
     setVoice      : a -> Voice -> (gain : Double) -> (pan : Double) -> IO ()
     stopVoice     : a -> Voice -> IO ()                  -- stale voices no-op, freeMesh-style
     setMasterGain : a -> Double -> IO ()
+
+  record App where                    -- a whole program, minus its backends
+    constructor MkApp
+    title : String
+    scene : {0 r, f, p, au : Type} -> Renderer r f => Platform p => Audio au =>
+            r -> p -> au -> Status -> IO ()
 #+end_src
+
+The rank-2 =scene= field is the lifetime guarantee: an =App= receives its
+capabilities and cannot conjure others, so the same value launches on all
+three targets. Each backend supplies one launcher (=Offler.Native.App.launch=,
+=Offler.Web.App.launchGl2= / =launchGpu=) that owns everything outside the
+scene — window or canvas, device acquisition (asynchronous on WebGPU),
+audio, page chrome — which is why every example's three entry-point
+modules are one import and one line.
 
 Decisions carried over from the orrery, with the reasoning:
 
@@ -217,6 +238,7 @@ by mechanism:
 | =bevy_input= (keyboard, mouse, touch, gamepad) | the =Platform= half of input: one =Event= stream for keys/pointer/touch (SDL names translated to the browser's spelling, fingers never faked as clicks) and =gamepads= polled into one =Gamepad= record — bevy's =Axis=/=ButtonInput= resources are its ECS spelling of the same snapshot |
 | =bevy_picking= (pointers → backends → focus) | =Offler.Picking=, the same three layers: mice and fingers unify into =PointerId=; the backend is =pickRay= (the *analytic* inverse of the camera the renderer draws with, so pixels map to world rays exactly at every aspect — no screen-space approximations) cast against declared bounds, =sceneTargets= reading world matrices from the graph where bevy's raycast reads =Mesh= assets; the focus layer is =pickStep=, a *pure* state machine emitting =PickOver=/=PickOut=/=PickDown=/=PickUp=/=PickClick= where bevy dispatches observer events. GPU id-buffer picking, bevy's optional backend, would need render-to-texture and stays out |
 | =bevy_audio= (=AudioPlayer=, =PlaybackSettings=) | the =Audio= interface: =loadSound= retains (URL decode async, handle valid at once — the texture bargain), =play= with =Playback= (gain/pan/rate/=semitones=/loop) mints a generational =Voice= where bevy spawns an entity; =SoundPcm= is the procedural path bevy routes through =AudioSource= assets |
+| =bevy_app= (=App=, =runner=) | =Offler.App=: an =App= is a title plus one rank-2 scene function; the backend launchers are bevy's runners, each owning its target's startup (the winit loop, or here: SDL3+wgpu, WebGL2, or WebGPU's async adapter). Bevy's plugin/schedule machinery has no counterpart — offler scenes are plain =IO= driven by =runLoop= |
 
 Where bevy derives the GPU-facing description with a proc macro, offler
 derives it in the type checker. A material type supplies its uniform block

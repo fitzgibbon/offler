@@ -118,3 +118,7 @@ run r p status = do
   runLoop p $ \t =>
     LIO.run (frame r p sc (concat animated) fps status t)
       >> reportFps status fps t
+
+export
+app : App
+app = MkApp "Shapes" (soundless run)

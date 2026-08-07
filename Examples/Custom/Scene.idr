@@ -194,3 +194,7 @@ run r p status = do
   status "stats" "custom material assets (Blend) + mask cutouts"
   runLoop p $ \t =>
     LIO.run (frame r p sc holos fps status t) >> reportFps status fps t
+
+export
+app : App
+app = MkApp "Custom" (soundless run)

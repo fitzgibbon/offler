@@ -1,9 +1,10 @@
 ||| The scraps every example wants: an fps counter and mesh-upload
-||| one-liners. Scenes receive a `status` function from their `main` --
-||| status lines are page/window chrome, not a `Platform` concept.
+||| one-liners. `Status` and `App` come from `Offler.App`, re-exported so
+||| scenes keep a single utility import.
 module Examples.Util
 
 import Data.IORef
+import public Offler.App
 import Offler.Gfx.Array
 import Offler.Gfx.Layout
 import Offler.Gfx.Platform
@@ -12,11 +13,6 @@ import Offler.Math
 import Offler.Mesh
 
 %default covering
-
-||| What a scene shows in its page footer or window title.
-public export
-Status : Type
-Status = String -> String -> IO ()
 
 public export
 record FpsCounter where

@@ -1,25 +1,11 @@
-||| Entry point for the desktop build: the same `Scene` the browser runs, on
-||| SDL3 and wgpu instead of the DOM and WebGPU.
+||| Entry point for the desktop build: `Offler.Native.App.launch` owns the
+||| window, renderer and mixer; only the scene is this module's.
 module Examples.Shapes.Main
 
 import Examples.Shapes.Scene
-import Examples.Util
-import Offler.Gfx.Platform
-import Offler.Gfx.Renderer
-import Offler.Native.Platform
-import Offler.Native.Wgpu
-
--- `Offler.Gfx.Renderer` re-exports `Control.Linear.LIO`, whose binds make
--- plain IO do-blocks ambiguous here.
-%hide Control.Linear.LIO.(>>=)
-%hide Control.Linear.LIO.(>>)
+import Offler.Native.App
 
 %default covering
 
 main : IO ()
-main = do
-  Just r <- initWgpu "Shapes"
-    | Nothing => putStrLn "shapes: could not open a window or start wgpu."
-  p <- initNative "Shapes" (ctxOf r)
-  putStrLn "shapes: Esc quits."
-  run r p (nativeStatus p)
+main = launch app

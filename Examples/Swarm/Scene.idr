@@ -141,3 +141,7 @@ run r p status = do
   runLoop p $ \t =>
     LIO.run (frame r p w core coreH body bodyH ih ib fps status t)
       >> reportFps status fps t
+
+export
+app : App
+app = MkApp "Swarm" (soundless run)

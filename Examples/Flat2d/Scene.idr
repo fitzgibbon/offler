@@ -110,3 +110,7 @@ run r p status = do
   status "stats" (show (length sprites) ++ " sprite nodes, orthographic")
   runLoop p $ \t =>
     LIO.run (frame r p sc nodes fps status t) >> reportFps status fps t
+
+export
+app : App
+app = MkApp "Flat2d" (soundless run)

@@ -114,3 +114,7 @@ run r p status = do
   status "stats" (show (length globeSegments) ++ " retained segments + immediate ribbon")
   runLoop p $ \t =>
     LIO.run (frame r p sc globe m1 m2 fps status t) >> reportFps status fps t
+
+export
+app : App
+app = MkApp "Lines" (soundless run)

@@ -291,3 +291,7 @@ run r p au status = do
   status "count-label" "gain 1.0"
   status "note" "click/tap a bar; arrows + Space; l locks the pointer"
   runLoop p $ \t => LIO.run (frame r p au w picker bars ball markH snd status t)
+
+export
+app : App
+app = MkApp "Chime" run

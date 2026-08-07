@@ -1,25 +1,11 @@
-||| Entry point for the desktop build: the same `Scene` the browser runs, on
-||| SDL3 and wgpu instead of the DOM and WebGPU.
+||| Entry point for the desktop build: `Offler.Native.App.launch` owns the
+||| window, renderer and mixer; only the scene is this module's.
 module Examples.Lines.Main
 
 import Examples.Lines.Scene
-import Examples.Util
-import Offler.Gfx.Platform
-import Offler.Gfx.Renderer
-import Offler.Native.Platform
-import Offler.Native.Wgpu
-
--- `Offler.Gfx.Renderer` re-exports `Control.Linear.LIO`, whose binds make
--- plain IO do-blocks ambiguous here.
-%hide Control.Linear.LIO.(>>=)
-%hide Control.Linear.LIO.(>>)
+import Offler.Native.App
 
 %default covering
 
 main : IO ()
-main = do
-  Just r <- initWgpu "Lines"
-    | Nothing => putStrLn "lines: could not open a window or start wgpu."
-  p <- initNative "Lines" (ctxOf r)
-  putStrLn "lines: Esc quits."
-  run r p (nativeStatus p)
+main = launch app
