@@ -52,7 +52,7 @@ prim__aspect : JSVal -> PrimIO Double
 ||| `texGen` counts decode completions: asset bind groups rebuild lazily
 ||| when it moves, which is how a texture that decodes after the assets
 ||| referencing it were made still reaches them.
-%foreign "javascript:lambda:(dev,gbuf,obuf,mbuf,objSize)=>{const rt={dev:dev,gbuf:gbuf,obuf:obuf,mbuf:mbuf,objSize:objSize,meshes:[],texs:[],texGen:0,mats:[],assets:[],pend:[],lineBuf:null,lineCount:0};dev.addEventListener('uncapturederror',(e)=>{const el=document.getElementById('error');if(el){el.style.display='block';el.textContent='WebGPU: '+e.error.message}});rt.sampler=dev.createSampler({magFilter:'linear',minFilter:'linear',addressModeU:'repeat',addressModeV:'repeat'});const w=dev.createTexture({size:[1,1],format:'rgba8unorm',usage:6});dev.queue.writeTexture({texture:w},new Uint8Array([255,255,255,255]),{},[1,1]);rt.white=w.createView();rt.bgFor=(M,t0,t1,t2,t3)=>{const key=rt.texGen+':'+t0+','+t1+','+t2+','+t3;let bg=M.bgs[key];if(!bg){const es=[{binding:0,resource:{buffer:rt.gbuf}},{binding:1,resource:{buffer:rt.obuf,size:rt.objSize}},{binding:2,resource:{buffer:rt.mbuf,size:M.matSize}}];const ts=[t0,t1,t2,t3];for(let i=0;i<M.texCount;i++){es.push({binding:3+2*i,resource:ts[i]>=0&&rt.texs[ts[i]]?rt.texs[ts[i]]:rt.white});es.push({binding:4+2*i,resource:rt.sampler})}bg=rt.dev.createBindGroup({layout:M.pl.getBindGroupLayout(0),entries:es});M.bgs[key]=bg}return bg};rt.exec=(pass,ai,mi,slot,blend)=>{const A=rt.assets[ai];const M=rt.mats[A.mat];const mm=rt.meshes[mi];if(A.gen!==rt.texGen){A.bg=rt.bgFor(M,A.t0,A.t1,A.t2,A.t3);A.gen=rt.texGen}const pipe=mm.topo===1?(blend?M.lplb:M.lpl):(blend?M.plb:M.pl);if(!pipe)return;pass.p.setPipeline(pipe);pass.p.setVertexBuffer(0,mm.b);pass.p.setBindGroup(0,A.bg,[slot*256,A.slot*256]);if(mm.ib){pass.p.setIndexBuffer(mm.ib,'uint32');pass.p.drawIndexed(mm.icount)}else{pass.p.draw(mm.n)}};return rt}"
+%foreign "javascript:lambda:(dev,gbuf,obuf,mbuf,objSize)=>{const rt={dev:dev,gbuf:gbuf,obuf:obuf,mbuf:mbuf,objSize:objSize,meshes:[],texs:[],texGen:0,mats:[],assets:[],pend:[],lineBuf:null,lineCount:0};dev.addEventListener('uncapturederror',(e)=>{const el=document.getElementById('error');if(el){el.style.display='block';el.textContent='WebGPU: '+e.error.message}});rt.sampler=dev.createSampler({magFilter:'linear',minFilter:'linear',addressModeU:'repeat',addressModeV:'repeat'});const w=dev.createTexture({size:[1,1],format:'rgba8unorm',usage:6});dev.queue.writeTexture({texture:w},new Uint8Array([255,255,255,255]),{},[1,1]);rt.white=w.createView();rt.bgFor=(M,t0,t1,t2,t3)=>{const key=rt.texGen+':'+t0+','+t1+','+t2+','+t3;let bg=M.bgs[key];if(!bg){const es=[{binding:0,resource:{buffer:rt.gbuf}},{binding:1,resource:{buffer:rt.obuf,size:rt.objSize}},{binding:2,resource:{buffer:rt.mbuf,size:M.matSize}}];const ts=[t0,t1,t2,t3];for(let i=0;i<M.texCount;i++){es.push({binding:3+2*i,resource:ts[i]>=0&&rt.texs[ts[i]]?rt.texs[ts[i]]:rt.white});es.push({binding:4+2*i,resource:rt.sampler})}bg=rt.dev.createBindGroup({layout:M.pl.getBindGroupLayout(0),entries:es});M.bgs[key]=bg}return bg};rt.exec=(pass,ai,mi,slot,blend)=>{const A=rt.assets[ai];const M=rt.mats[A.mat];const mm=rt.meshes[mi];if(!mm)return;if(A.gen!==rt.texGen){A.bg=rt.bgFor(M,A.t0,A.t1,A.t2,A.t3);A.gen=rt.texGen}const pipe=mm.topo===1?(blend?M.lplb:M.lpl):(blend?M.plb:M.pl);if(!pipe)return;pass.p.setPipeline(pipe);pass.p.setVertexBuffer(0,mm.b);pass.p.setBindGroup(0,A.bg,[slot*256,A.slot*256]);if(mm.ib){pass.p.setIndexBuffer(mm.ib,'uint32');pass.p.drawIndexed(mm.icount)}else{pass.p.draw(mm.n)}};return rt}"
 prim__initRt : JSVal -> JSVal -> JSVal -> JSVal -> Int -> PrimIO JSVal
 
 ||| Build a material type's pipelines from its generated WGSL and specs:
@@ -75,7 +75,7 @@ prim__updateAsset : JSVal -> Int -> Int -> Int -> Int -> Int -> PrimIO Int
 prim__uploadMatSlot : JSVal -> AnyPtr -> Int -> PrimIO Int
 
 ||| The engine's gizmo line pipeline and its one bind group (globals + the
-||| object buffer, whose lane carries the colour).
+||| object buffer; colours are per vertex, the lane a whole-overlay tint).
 %foreign "javascript:lambda:(rt,src,bindSpec,lineSpec,lineStride)=>{const dev=rt.dev;const mod=dev.createShaderModule({code:src});const fmt=navigator.gpu.getPreferredCanvasFormat();const entries=bindSpec.split(';').map(e=>{const a=e.split(',').map(Number);return {binding:a[1],visibility:a[2],buffer:{type:'uniform',hasDynamicOffset:!!a[3],minBindingSize:a[4]}}});const bgl=dev.createBindGroupLayout({entries:entries});const layout=dev.createPipelineLayout({bindGroupLayouts:[bgl]});const attrs=lineSpec.split(';').map(e=>{const a=e.split(',').map(Number);return {shaderLocation:a[0],offset:a[1],format:a[2]>1?'float32x'+a[2]:'float32'}});const pl=dev.createRenderPipeline({layout:layout,vertex:{module:mod,entryPoint:'vs',buffers:[{arrayStride:lineStride,attributes:attrs}]},fragment:{module:mod,entryPoint:'fs',targets:[{format:fmt,blend:{color:{srcFactor:'src-alpha',dstFactor:'one-minus-src-alpha'},alpha:{srcFactor:'one',dstFactor:'one-minus-src-alpha'}}}]},primitive:{topology:'line-list'},depthStencil:{format:'depth24plus',depthWriteEnabled:false,depthCompare:'less'}});const bg=dev.createBindGroup({layout:pl.getBindGroupLayout(0),entries:[{binding:0,resource:{buffer:rt.gbuf}},{binding:1,resource:{buffer:rt.obuf,size:rt.objSize}}]});rt.line={pl:pl,bg:bg};return 0}"
 prim__lineInit : JSVal -> String -> String -> String -> Int -> PrimIO Int
 
@@ -104,6 +104,11 @@ prim__createMesh : JSVal -> AnyPtr -> Int -> Int -> PrimIO Int
 %foreign "javascript:lambda:(rt,a,n,idx,icount)=>{const dev=rt.dev;const b=dev.createBuffer({size:a.byteLength,usage:40});dev.queue.writeBuffer(b,0,a);const ib=dev.createBuffer({size:idx.byteLength,usage:24});dev.queue.writeBuffer(ib,0,idx);return rt.meshes.push({b:b,n:n,topo:0,ib:ib,icount:icount})-1}"
 prim__createMeshIndexed : JSVal -> AnyPtr -> Int -> AnyPtr -> Int -> PrimIO Int
 
+||| Destroy the buffers and tombstone the table entry; `exec` skips draws
+||| whose entry is gone, so stale handles are silent, not fatal.
+%foreign "javascript:lambda:(rt,mi)=>{const mm=rt.meshes[mi];if(!mm)return 0;mm.b.destroy();if(mm.ib)mm.ib.destroy();rt.meshes[mi]=null;return 0}"
+prim__freeMesh : JSVal -> Int -> PrimIO Int
+
 ||| The gizmo overlay is the one buffer that gets replaced; the old one
 ||| must go, and never mid-frame.
 %foreign "javascript:lambda:(rt,a,n)=>{if(rt.lineBuf)rt.lineBuf.destroy();const b=rt.dev.createBuffer({size:a.byteLength,usage:40});rt.dev.queue.writeBuffer(b,0,a);rt.lineBuf=b;rt.lineCount=n;return 0}"
@@ -128,7 +133,7 @@ prim__draw : JSVal -> JSVal -> Int -> Int -> Int -> Int -> Double -> PrimIO Int
 
 ||| The batched form: one foreign call records `count` consecutive object
 ||| slots against one asset.
-%foreign "javascript:lambda:(rt,pass,asset,mesh,first,count,blend,depth)=>{if(blend){for(let i=0;i<count;i++)rt.pend.push({a:asset,m:mesh,s:first+i,d:depth});return 0}const A=rt.assets[asset];const M=rt.mats[A.mat];const mm=rt.meshes[mesh];if(A.gen!==rt.texGen){A.bg=rt.bgFor(M,A.t0,A.t1,A.t2,A.t3);A.gen=rt.texGen}const pipe=mm.topo===1?M.lpl:M.pl;if(!pipe)return 0;pass.p.setPipeline(pipe);pass.p.setVertexBuffer(0,mm.b);if(mm.ib)pass.p.setIndexBuffer(mm.ib,'uint32');for(let i=0;i<count;i++){pass.p.setBindGroup(0,A.bg,[(first+i)*256,A.slot*256]);if(mm.ib)pass.p.drawIndexed(mm.icount);else pass.p.draw(mm.n)}return 0}"
+%foreign "javascript:lambda:(rt,pass,asset,mesh,first,count,blend,depth)=>{if(blend){for(let i=0;i<count;i++)rt.pend.push({a:asset,m:mesh,s:first+i,d:depth});return 0}const A=rt.assets[asset];const M=rt.mats[A.mat];const mm=rt.meshes[mesh];if(!mm)return 0;if(A.gen!==rt.texGen){A.bg=rt.bgFor(M,A.t0,A.t1,A.t2,A.t3);A.gen=rt.texGen}const pipe=mm.topo===1?M.lpl:M.pl;if(!pipe)return 0;pass.p.setPipeline(pipe);pass.p.setVertexBuffer(0,mm.b);if(mm.ib)pass.p.setIndexBuffer(mm.ib,'uint32');for(let i=0;i<count;i++){pass.p.setBindGroup(0,A.bg,[(first+i)*256,A.slot*256]);if(mm.ib)pass.p.drawIndexed(mm.icount);else pass.p.draw(mm.n)}return 0}"
 prim__drawSlices : JSVal -> JSVal -> Int -> Int -> Int -> Int -> Int -> Double -> PrimIO Int
 
 %foreign "javascript:lambda:(rt,pass,off)=>{if(!rt.lineBuf||rt.lineCount<=0)return 0;pass.p.setPipeline(rt.line.pl);pass.p.setVertexBuffer(0,rt.lineBuf);pass.p.setBindGroup(0,rt.line.bg,[off]);pass.p.draw(rt.lineCount);return 0}"
@@ -223,6 +228,8 @@ Renderer Gpu GpuFrame where
     meshHandle <$> primIO (prim__createMeshIndexed r.rt (vertsRaw vs) (vertsCount vs)
                                                    (indicesRaw ix) (indicesCount ix))
 
+  freeMesh r mesh = ignore (primIO (prim__freeMesh r.rt (meshIndex mesh)))
+
   loadTexture r src =
     let url = case src of
                 FromPath p => p
@@ -250,7 +257,7 @@ Renderer Gpu GpuFrame where
     ignore (primIO (prim__updateAsset r.rt a t0 t1 t2 t3))
     pure (handleFor a (alphaMode v))
 
-  setLines r vs = do
+  setGizmos r vs = do
     ignore (primIO (prim__setLines r.rt (vertsRaw vs) (vertsCount vs)))
     writeIORef r.lineCount (vertsCount vs)
 
@@ -299,15 +306,16 @@ Renderer Gpu GpuFrame where
         pure filled
     pure1 (MkGpuFrame p i')
 
-  drawLines r (MkGpuFrame p i) colour =
+  drawGizmos r (MkGpuFrame p i) =
     case slot r.objScratch i of
       Nothing => pure1 (MkGpuFrame p i)
       Just s => do
         liftIO $ do
           n <- readIORef r.lineCount
           when (n > 0) $ do
-            pokeObject r.objScratch s identity
-                       colour.red colour.green colour.blue colour.alpha
+            -- Identity model, white lane: colours are per vertex; the lane
+            -- is a whole-overlay tint.
+            pokeObject r.objScratch s identity 1.0 1.0 1.0 1.0
             ignore (primIO (prim__drawLines r.rt p (slotOffset s)))
         pure1 (MkGpuFrame p (i + 1))
 

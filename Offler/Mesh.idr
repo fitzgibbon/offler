@@ -9,6 +9,7 @@
 module Offler.Mesh
 
 import Offler.Gfx.Array
+import Offler.Color
 import Offler.Gfx.Layout
 import Offler.Math
 
@@ -322,23 +323,29 @@ torusIndexed rr tr ringSegments tubeSegments =
 --------------------------------------------------------------------------------
 -- Lines
 
-||| World-space line segments, four padded floats a vertex so two vertices
-||| fill one `poke16`, into the buffer `setLines` takes.
+||| Colour a segment list uniformly.
+public export
+colored : Color -> List (V3, V3) -> List (V3, V3, Color)
+colored c = map (\(a, b) => (a, b, c))
+
+||| Coloured line segments -- eight floats a vertex (vec4 position, vec4
+||| colour), so one `poke16` fills a whole segment -- into the buffer
+||| `setGizmos` or a `Lines` `createMesh` takes.
 export
-uploadLines : List (V3, V3) -> IO (VertBuf Lines)
+uploadLines : List (V3, V3, Color) -> IO (VertBuf Lines)
 uploadLines segs = do
   buf <- newVerts {t = Lines} (cast (length segs) * 2)
   go buf.arr 0 segs
   pure buf
   where
-    go : F32Array cap -> Int -> List (V3, V3) -> IO ()
+    go : F32Array cap -> Int -> List (V3, V3, Color) -> IO ()
     go arr _ [] = pure ()
-    go arr i ((a, b) :: rest) = case window {w = 8} arr i of
+    go arr i ((a, b, c) :: rest) = case window {w = 16} arr i of
       Nothing => pure ()
       Just o => do
-        poke4 arr (sub 0 o) a.vx a.vy a.vz 0.0
-        poke4 arr (sub 4 o) b.vx b.vy b.vz 0.0
-        go arr (i + 8) rest
+        poke16 arr o a.vx a.vy a.vz 0.0  c.red c.green c.blue c.alpha
+                     b.vx b.vy b.vz 0.0  c.red c.green c.blue c.alpha
+        go arr (i + 16) rest
 
 ||| Consecutive points joined into segments.
 public export

@@ -66,9 +66,17 @@ interface Renderer r f | r where
   ||| Upload a mesh of a topology: tightly packed vertices in that
   ||| topology's layout (position+normal+uv for triangles, padded positions
   ||| for lines). The count travels inside `Verts`, checked against the
-  ||| array it came from. Meshes are never freed -- create them at startup,
-  ||| not per frame.
+  ||| array it came from. Create meshes at load time, not per frame;
+  ||| release one that will not draw again with `freeMesh`.
   createMesh : {t : Topology} -> r -> Verts t -> IO (MeshHandle t)
+
+  ||| Release a mesh's GPU buffers. The handle and any copies of it are
+  ||| stale afterwards: draws against them are silent no-ops (the mesh
+  ||| table keeps a tombstone, never reuses the index). Unrestricted
+  ||| handles cannot make use-after-free a type error the way the frame
+  ||| token does -- a linear handle could not be drawn twice -- so this is
+  ||| the honest runtime seam: bevy frees on refcount for the same reason.
+  freeMesh : r -> MeshHandle t -> IO ()
 
   ||| A triangle mesh with an index list: shared vertices are stored once
   ||| and named many times, which is how most meshes want to exist.
@@ -106,11 +114,13 @@ interface Renderer r f | r where
   ||| updated data but a stale alpha phase; prefer the returned one.
   updateMaterial : Material m => r -> Handle m -> m -> IO (Handle m)
 
-  ||| Upload the gizmo overlay: an immediate-mode line list in world space,
-  ||| offler's `bevy_gizmos`. One overlay per renderer, replaced wholesale
-  ||| -- for retained line *objects*, make a `Lines` mesh and a material
-  ||| with `matLineEntry` instead.
-  setLines : r -> Verts Lines -> IO ()
+  ||| Upload the gizmo overlay: an immediate-mode coloured line list in
+  ||| world space. One overlay per renderer, replaced wholesale -- the
+  ||| *replaceable* GPU buffer is why this is an engine primitive at all
+  ||| (meshes are never freed, so a per-frame `createMesh` would leak).
+  ||| Applications should not call this directly: `Offler.Gizmos` is the
+  ||| vocabulary over it, and retained gizmos are ordinary `Lines` meshes.
+  setGizmos : r -> Verts Lines -> IO ()
 
   ||| Drawing-buffer width over height, as it is *now*.
   aspect : r -> IO Double
@@ -142,11 +152,11 @@ interface Renderer r f | r where
           -> MeshHandle t -> Handle m -> List Mat4
           -> {auto 0 ok : TopoOk t m} -> L1 IO f
 
-  ||| Draw the whole gizmo overlay in one call, one pixel wide, unlit, and
-  ||| blended over the meshes drawn so far. Depth is tested but not
-  ||| written, so lines neither hide each other nor stipple where they
-  ||| cross.
-  drawLines : r -> (1 frame : f) -> Color -> L1 IO f
+  ||| Draw the whole gizmo overlay in one call: per-vertex coloured, one
+  ||| pixel wide, unlit, blended over the meshes drawn so far. Depth is
+  ||| tested but not written, so lines neither hide each other nor stipple
+  ||| where they cross.
+  drawGizmos : r -> (1 frame : f) -> L1 IO f
 
   ||| Finish the frame: record the sorted transparent phase, and submit.
   ||| Consumes the token.

@@ -62,6 +62,9 @@ prim__createMesh : AnyPtr -> AnyPtr -> Int -> Int -> PrimIO Int
 %foreign "C:offler_create_mesh_indexed,liboffler"
 prim__createMeshIndexed : AnyPtr -> AnyPtr -> Int -> AnyPtr -> Int -> PrimIO Int
 
+%foreign "C:offler_free_mesh,liboffler"
+prim__freeMesh : AnyPtr -> Int -> PrimIO ()
+
 %foreign "C:offler_set_lines,liboffler"
 prim__setLines : AnyPtr -> AnyPtr -> Int -> Int -> PrimIO ()
 
@@ -153,6 +156,8 @@ Renderer Wgpu WgpuFrame where
                                                    (indicesRaw ix)
                                                    (indicesCount ix))
 
+  freeMesh r mesh = primIO (prim__freeMesh r.ctx (meshIndex mesh))
+
   loadTexture r src = do
     i <- case src of
            FromPath path => primIO (prim__textureFile r.ctx path)
@@ -179,7 +184,7 @@ Renderer Wgpu WgpuFrame where
     primIO (prim__updateAsset r.ctx a t0 t1 t2 t3)
     pure (handleFor a (alphaMode v))
 
-  setLines r vs =
+  setGizmos r vs =
     primIO (prim__setLines r.ctx (vertsRaw vs) (vertsFloats vs) (vertsCount vs))
 
   aspect r = primIO (prim__aspect r.ctx)
@@ -222,13 +227,13 @@ Renderer Wgpu WgpuFrame where
         pure filled
     pure1 (MkWgpuFrame i')
 
-  drawLines r (MkWgpuFrame i) colour =
+  drawGizmos r (MkWgpuFrame i) =
     case slot r.objScratch i of
       Nothing => pure1 (MkWgpuFrame i)
       Just s => do
         liftIO $ do
-          pokeObject r.objScratch s identity
-                     colour.red colour.green colour.blue colour.alpha
+          -- Identity model, white lane: colours are per vertex.
+          pokeObject r.objScratch s identity 1.0 1.0 1.0 1.0
           primIO (prim__drawLines r.ctx (slotIndex s))
         pure1 (MkWgpuFrame (i + 1))
 

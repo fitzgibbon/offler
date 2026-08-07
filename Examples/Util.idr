@@ -57,16 +57,3 @@ loadIndexed r (vs, is) = do
   (buf, ix) <- uploadIndexed vs is
   createMeshIndexed r buf.handle ix
 
-||| A retained line-topology mesh from world- (or object-) space segments.
-export
-loadLineMesh : Renderer r f => r -> List (V3, V3) -> IO (MeshHandle Lines)
-loadLineMesh r segs = do
-  buf <- uploadLines segs
-  createMesh r buf.handle
-
-||| Replace the gizmo overlay from segments in one step.
-export
-loadLines : Renderer r f => r -> List (V3, V3) -> IO ()
-loadLines r segs = do
-  buf <- uploadLines segs
-  setLines r buf.handle

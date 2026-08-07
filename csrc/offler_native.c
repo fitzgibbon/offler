@@ -804,6 +804,27 @@ int offler_create_mesh_indexed(void *p, float *verts, int vertexCount,
                               .ibuf = ib, .icount = idxCount });
 }
 
+/* Destroy the buffers and tombstone the entry; exec_draw skips draws whose
+ * entry is gone, so stale handles are silent, not fatal. Indices are never
+ * reused. */
+void offler_free_mesh(void *p, int mi) {
+  Ctx *c = (Ctx *)p;
+  if (mi < 0 || mi >= c->meshCount) return;
+  Mesh *m = &c->meshes[mi];
+  if (m->buf) {
+    wgpuBufferDestroy(m->buf);
+    wgpuBufferRelease(m->buf);
+    m->buf = NULL;
+  }
+  if (m->ibuf) {
+    wgpuBufferDestroy(m->ibuf);
+    wgpuBufferRelease(m->ibuf);
+    m->ibuf = NULL;
+  }
+  m->count = 0;
+  m->icount = 0;
+}
+
 void offler_set_lines(void *p, float *verts, int floatCount, int vertexCount) {
   Ctx *c = (Ctx *)p;
   if (c->lineBuf) { wgpuBufferDestroy(c->lineBuf); wgpuBufferRelease(c->lineBuf); }
@@ -896,6 +917,7 @@ static void exec_draw(Ctx *c, const Pending *d, int blend) {
   struct Asset *a = &c->assets[d->asset];
   Mat *m = &c->mats[a->mat];
   Mesh *mm = &c->meshes[d->mesh];
+  if (!mm->buf) return;
   WGPURenderPipeline pipe = mm->topo == 1 ? (blend ? m->lineB : m->lineO)
                                           : (blend ? m->triB : m->triO);
   if (!pipe) return;

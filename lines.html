@@ -55,7 +55,7 @@
 <body>
 <header>
   <h1><a href="index.html">offler</a> / Lines <span>&mdash; Idris 2 compiled to JavaScript</span></h1>
-  <p>Line topology as a mesh property: a retained wireframe globe and grid, spun by scene-graph transforms through the standard material's <code>vs_line</code> entry &mdash; plus the animated ribbon on the immediate-mode gizmo overlay, the one thing rebuilt per frame.</p>
+  <p>Both gizmo modes: the globe and grid are <em>retained</em> gizmo assets (bevy 0.14's <code>GizmoAsset</code>) &mdash; scene nodes spun by their transforms, the globe's per-vertex latitude hues kept through retention, the grid faded by its asset's tint &mdash; plus the animated ribbon on the <em>immediate</em> overlay, the one thing rebuilt per frame.</p>
 </header>
 
 <canvas id="gl"></canvas>

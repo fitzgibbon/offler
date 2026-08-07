@@ -41,7 +41,7 @@ prim__context : JSVal -> PrimIO JSVal
 ||| the replay executors with their binding caches -- defined once here
 ||| because each `%foreign` lambda is otherwise its own world. Buffer sizes
 ||| and strides arrive as arguments from the layout.
-%foreign "javascript:lambda:(gl,meshSpec,meshStride,lineSpec,lineStride,gSize,objSize,stride,maxN)=>{const rt={gl:gl,meshes:[],texs:[],mats:[],assets:[],all:[],lineBuf:null,lineCount:0,lineProg:null,objArr:null,matArr:null,curProg:null,curMesh:null,curTex:null};gl.enable(gl.DEPTH_TEST);gl.enable(gl.CULL_FACE);const mkbuf=(n)=>{const b=gl.createBuffer();gl.bindBuffer(gl.UNIFORM_BUFFER,b);gl.bufferData(gl.UNIFORM_BUFFER,n,gl.DYNAMIC_DRAW);return b};rt.gbuf=mkbuf(gSize);rt.obuf=mkbuf(stride*maxN);rt.mbuf=mkbuf(stride*maxN);gl.bindBufferBase(gl.UNIFORM_BUFFER,0,rt.gbuf);rt.white=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,rt.white);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA8,1,1,0,gl.RGBA,gl.UNSIGNED_BYTE,new Uint8Array([255,255,255,255]));const meshAttrs=meshSpec.split(';').map(e=>e.split(',').map(Number));const lineAttrs=lineSpec.split(';').map(e=>e.split(',').map(Number));rt.bindMesh=(mm)=>{gl.bindBuffer(gl.ARRAY_BUFFER,mm.b);const attrs=mm.topo===1?lineAttrs:meshAttrs;const stridev=mm.topo===1?lineStride:meshStride;for(const a of attrs){gl.enableVertexAttribArray(a[0]);gl.vertexAttribPointer(a[0],a[2],gl.FLOAT,false,stridev,a[1])}if(mm.topo!==1){}else{gl.disableVertexAttribArray(1);gl.disableVertexAttribArray(2)}if(mm.ib)gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,mm.ib)};rt.execDraw=(d)=>{const A=rt.assets[d.a];const M=rt.mats[A.mat];const mm=rt.meshes[d.m];const prog=mm.topo===1?M.lineProg:M.prog;if(!prog)return;const off=d.s*stride;if(rt.curProg!==prog){gl.useProgram(prog);rt.curProg=prog}gl.bindBufferRange(gl.UNIFORM_BUFFER,1,rt.obuf,off,objSize);gl.bindBufferRange(gl.UNIFORM_BUFFER,2,rt.mbuf,A.slot*stride,M.matSize);const tk=A.mat+':'+A.t0+','+A.t1+','+A.t2+','+A.t3;if(rt.curTex!==tk){const ts=[A.t0,A.t1,A.t2,A.t3];for(let i=0;i<M.texCount;i++){gl.activeTexture(gl.TEXTURE0+i);gl.bindTexture(gl.TEXTURE_2D,ts[i]>=0&&rt.texs[ts[i]]?rt.texs[ts[i]]:rt.white)}rt.curTex=tk}if(rt.curMesh!==mm){rt.bindMesh(mm);rt.curMesh=mm}if(mm.ib)gl.drawElements(mm.topo===1?gl.LINES:gl.TRIANGLES,mm.icount,gl.UNSIGNED_INT,0);else gl.drawArrays(mm.topo===1?gl.LINES:gl.TRIANGLES,0,mm.n)};rt.execLine=(d)=>{if(!rt.lineBuf||rt.lineCount<=0)return;gl.useProgram(rt.lineProg);rt.curProg=null;const off=d.s*stride;gl.bindBufferRange(gl.UNIFORM_BUFFER,1,rt.obuf,off,objSize);gl.bindBuffer(gl.ARRAY_BUFFER,rt.lineBuf);gl.enableVertexAttribArray(0);gl.vertexAttribPointer(0,3,gl.FLOAT,false,16,0);gl.disableVertexAttribArray(1);gl.disableVertexAttribArray(2);rt.curMesh=null;gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.depthMask(false);gl.drawArrays(gl.LINES,0,rt.lineCount);gl.depthMask(true);gl.disable(gl.BLEND)};return rt}"
+%foreign "javascript:lambda:(gl,meshSpec,meshStride,lineSpec,lineStride,gSize,objSize,stride,maxN)=>{const rt={gl:gl,meshes:[],texs:[],mats:[],assets:[],all:[],lineBuf:null,lineCount:0,lineProg:null,objArr:null,matArr:null,curProg:null,curMesh:null,curTex:null};gl.enable(gl.DEPTH_TEST);gl.enable(gl.CULL_FACE);const mkbuf=(n)=>{const b=gl.createBuffer();gl.bindBuffer(gl.UNIFORM_BUFFER,b);gl.bufferData(gl.UNIFORM_BUFFER,n,gl.DYNAMIC_DRAW);return b};rt.gbuf=mkbuf(gSize);rt.obuf=mkbuf(stride*maxN);rt.mbuf=mkbuf(stride*maxN);gl.bindBufferBase(gl.UNIFORM_BUFFER,0,rt.gbuf);rt.white=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,rt.white);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA8,1,1,0,gl.RGBA,gl.UNSIGNED_BYTE,new Uint8Array([255,255,255,255]));const meshAttrs=meshSpec.split(';').map(e=>e.split(',').map(Number));const lineAttrs=lineSpec.split(';').map(e=>e.split(',').map(Number));rt.bindMesh=(mm)=>{gl.bindBuffer(gl.ARRAY_BUFFER,mm.b);const attrs=mm.topo===1?lineAttrs:meshAttrs;const stridev=mm.topo===1?lineStride:meshStride;for(const a of attrs){gl.enableVertexAttribArray(a[0]);gl.vertexAttribPointer(a[0],a[2],gl.FLOAT,false,stridev,a[1])}if(mm.topo!==1){}else{gl.disableVertexAttribArray(1);gl.disableVertexAttribArray(2)}if(mm.ib)gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,mm.ib)};rt.execDraw=(d)=>{const A=rt.assets[d.a];const M=rt.mats[A.mat];const mm=rt.meshes[d.m];if(!mm)return;const prog=mm.topo===1?M.lineProg:M.prog;if(!prog)return;const off=d.s*stride;if(rt.curProg!==prog){gl.useProgram(prog);rt.curProg=prog}gl.bindBufferRange(gl.UNIFORM_BUFFER,1,rt.obuf,off,objSize);gl.bindBufferRange(gl.UNIFORM_BUFFER,2,rt.mbuf,A.slot*stride,M.matSize);const tk=A.mat+':'+A.t0+','+A.t1+','+A.t2+','+A.t3;if(rt.curTex!==tk){const ts=[A.t0,A.t1,A.t2,A.t3];for(let i=0;i<M.texCount;i++){gl.activeTexture(gl.TEXTURE0+i);gl.bindTexture(gl.TEXTURE_2D,ts[i]>=0&&rt.texs[ts[i]]?rt.texs[ts[i]]:rt.white)}rt.curTex=tk}if(rt.curMesh!==mm){rt.bindMesh(mm);rt.curMesh=mm}if(mm.ib)gl.drawElements(mm.topo===1?gl.LINES:gl.TRIANGLES,mm.icount,gl.UNSIGNED_INT,0);else gl.drawArrays(mm.topo===1?gl.LINES:gl.TRIANGLES,0,mm.n)};rt.execLine=(d)=>{if(!rt.lineBuf||rt.lineCount<=0)return;gl.useProgram(rt.lineProg);rt.curProg=null;const off=d.s*stride;gl.bindBufferRange(gl.UNIFORM_BUFFER,1,rt.obuf,off,objSize);gl.bindBuffer(gl.ARRAY_BUFFER,rt.lineBuf);for(const a of lineAttrs){gl.enableVertexAttribArray(a[0]);gl.vertexAttribPointer(a[0],a[2],gl.FLOAT,false,lineStride,a[1])}gl.disableVertexAttribArray(2);rt.curMesh=null;gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.depthMask(false);gl.drawArrays(gl.LINES,0,rt.lineCount);gl.depthMask(true);gl.disable(gl.BLEND)};return rt}"
 prim__initRt : JSVal -> String -> Int -> String -> Int -> Int -> Int -> Int -> Int -> PrimIO JSVal
 
 ||| The scratch arrays, attached once they exist so replay can read slots.
@@ -83,6 +83,11 @@ prim__createMesh : JSVal -> AnyPtr -> Int -> Int -> PrimIO Int
 
 %foreign "javascript:lambda:(rt,a,n,idx,icount)=>{const gl=rt.gl;const b=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,b);gl.bufferData(gl.ARRAY_BUFFER,a,gl.STATIC_DRAW);const ib=gl.createBuffer();gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,ib);gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,idx,gl.STATIC_DRAW);return rt.meshes.push({b:b,n:n,topo:0,ib:ib,icount:icount})-1}"
 prim__createMeshIndexed : JSVal -> AnyPtr -> Int -> AnyPtr -> Int -> PrimIO Int
+
+||| Delete the buffers and tombstone the entry; `execDraw` skips draws
+||| whose entry is gone, so stale handles are silent, not fatal.
+%foreign "javascript:lambda:(rt,mi)=>{const gl=rt.gl;const mm=rt.meshes[mi];if(!mm)return 0;gl.deleteBuffer(mm.b);if(mm.ib)gl.deleteBuffer(mm.ib);rt.meshes[mi]=null;return 0}"
+prim__freeMesh : JSVal -> Int -> PrimIO Int
 
 %foreign "javascript:lambda:(rt,a,n)=>{const gl=rt.gl;if(!rt.lineBuf)rt.lineBuf=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,rt.lineBuf);gl.bufferData(gl.ARRAY_BUFFER,a,gl.STATIC_DRAW);rt.lineCount=n;return 0}"
 prim__setLines : JSVal -> AnyPtr -> Int -> PrimIO Int
@@ -183,6 +188,8 @@ Renderer Gl2 Gl2Frame where
     meshHandle <$> primIO (prim__createMeshIndexed r.rt (vertsRaw vs) (vertsCount vs)
                                                    (indicesRaw ix) (indicesCount ix))
 
+  freeMesh r mesh = ignore (primIO (prim__freeMesh r.rt (meshIndex mesh)))
+
   loadTexture r src =
     let url = case src of
                 FromPath p => p
@@ -211,7 +218,7 @@ Renderer Gl2 Gl2Frame where
     ignore (primIO (prim__updateAsset r.rt a t0 t1 t2 t3))
     pure (handleFor a (alphaMode v))
 
-  setLines r vs = do
+  setGizmos r vs = do
     ignore (primIO (prim__setLines r.rt (vertsRaw vs) (vertsCount vs)))
     writeIORef r.lineCount (vertsCount vs)
 
@@ -256,15 +263,15 @@ Renderer Gl2 Gl2Frame where
         pure filled
     pure1 (MkGl2Frame i')
 
-  drawLines r (MkGl2Frame i) colour =
+  drawGizmos r (MkGl2Frame i) =
     case slot r.objScratch i of
       Nothing => pure1 (MkGl2Frame i)
       Just s => do
         liftIO $ do
           n <- readIORef r.lineCount
           when (n > 0) $ do
-            pokeObject r.objScratch s identity
-                       colour.red colour.green colour.blue colour.alpha
+            -- Identity model, white lane: colours are per vertex.
+            pokeObject r.objScratch s identity 1.0 1.0 1.0 1.0
             ignore (primIO (prim__drawLines r.rt (slotIndex s)))
         pure1 (MkGl2Frame (i + 1))
 

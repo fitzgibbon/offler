@@ -136,14 +136,17 @@ joinSemi (x :: xs) = x ++ ";" ++ joinSemi xs
 public export
 data Topology = Triangles | Lines
 
-||| The vertex layout each topology carries. Line vertices are a position
-||| padded to 16 bytes, so `poke16` fills four of them per foreign call and
-||| a per-frame overlay stays affordable to rebuild.
+||| The vertex layout each topology carries. A line vertex is a `vec4`
+||| position (w unused -- the padding made useful) and a `vec4` colour:
+||| 32 bytes, so one `poke16` fills a whole segment and a per-frame gizmo
+||| overlay stays affordable to rebuild. The colour feeds the gizmo
+||| pipeline's per-vertex tint; a material's own `vs_line` may read or
+||| ignore it (the standard material's ignores it).
 public export
 vertexFieldsOf : Topology -> List Field
 vertexFieldsOf Triangles =
   [MkField "pos" Vec3, MkField "normal" Vec3, MkField "uv" Vec2]
-vertexFieldsOf Lines = [MkField "pos" Vec3]
+vertexFieldsOf Lines = [MkField "pos" Vec4, MkField "color" Vec4]
 
 ||| What crosses the FFI for a topology: 0 triangles, 1 lines.
 public export
@@ -151,25 +154,25 @@ topoCode : Topology -> Int
 topoCode Triangles = 0
 topoCode Lines = 1
 
-||| Bytes per vertex. Lines round up to 16 for the `poke16` discipline.
+||| Bytes per vertex.
 public export
 strideOf : Topology -> Int
 strideOf Triangles = 32
-strideOf Lines = 16
+strideOf Lines = 32
 
 0 strideTrianglesOk : Offler.Gfx.Layout.strideOf Triangles
                     = Offler.Gfx.Layout.packedEnd 0 (Offler.Gfx.Layout.vertexFieldsOf Triangles)
 strideTrianglesOk = Refl
 
 0 strideLinesOk : Offler.Gfx.Layout.strideOf Lines
-                = Offler.Gfx.Layout.roundUp (Offler.Gfx.Layout.packedEnd 0 (Offler.Gfx.Layout.vertexFieldsOf Lines)) 16
+                = Offler.Gfx.Layout.packedEnd 0 (Offler.Gfx.Layout.vertexFieldsOf Lines)
 strideLinesOk = Refl
 
 ||| Floats per vertex, which is what `Verts` counts in.
 public export
 floatsOf : Topology -> Int
 floatsOf Triangles = 8
-floatsOf Lines = 4
+floatsOf Lines = 8
 
 0 floatsTrianglesOk : Offler.Gfx.Layout.floatsOf Triangles * 4 = Offler.Gfx.Layout.strideOf Triangles
 floatsTrianglesOk = Refl
@@ -567,14 +570,14 @@ meshFloatsOk = Refl
 
 public export
 lineStride : Int
-lineStride = 16
+lineStride = 32
 
 0 lineStrideOk : Offler.Gfx.Layout.lineStride = Offler.Gfx.Layout.strideOf Lines
 lineStrideOk = Refl
 
 public export
 lineFloats : Int
-lineFloats = 4
+lineFloats = 8
 
 0 lineFloatsOk : Offler.Gfx.Layout.lineFloats = Offler.Gfx.Layout.floatsOf Lines
 lineFloatsOk = Refl

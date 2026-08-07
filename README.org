@@ -45,7 +45,7 @@ navigating with =?r=webgpu=.
 | example    | page          | demonstrates                                                             |
 |------------+---------------+--------------------------------------------------------------------------|
 | =Shapes=   | =shapes.html= | bevy's =3d_shapes= as a retained scene graph: eleven nodes over material assets, an *indexed* torus, a =Blend= glass shape, the PNG uv-checker back row, a JPEG ground, two directional lights |
-| =Lines=    | =lines.html=  | line *topology* as a mesh property: a retained wireframe globe and grid are =Lines= meshes spun by node transforms through the standard material's =vs_line= (gated by =TopoOk= at compile time); the animated ribbon stays on the immediate-mode gizmo overlay |
+| =Lines=    | =lines.html=  | both gizmo modes: the globe and grid are *retained* gizmo assets (=Lines= meshes spun by node transforms, =TopoOk=-gated); the ribbon is *immediate* =GizmoData= rebuilt per frame with a hue gradient along its length, plus an RGB axes marker |
 | =Swarm=    | =swarm.html=  | what retained materials buy at scale: 10 000 bodies share two dozen hue-bucketed assets, so a frame writes only model matrices — one =drawMany= per bucket, 58 fps at the cap on hardware GL |
 | =Custom=   | =custom.html= | a user-defined material, end to end: a scanline hologram implementing the =Material= interface with its own WGSL and GLSL, =Blend=-composited through =Mask= cutout panels, all as scene-graph nodes over assets |
 | =Flat2d=   | =flat2d.html= | the 2D mode: forty sprite nodes under an orthographic camera, unlit assets, a frame is forty =setTransform=s |
@@ -79,6 +79,7 @@ desktop adds.
 | =Offler.Gfx.Uniform=    | the two uniform scratches and the only writers into them            |
 | =Offler.Gfx.Renderer=   | the =Renderer= interface with its linear frame token; =MeshHandle t=, =Drawable= |
 | =Offler.Scene=          | the retained scene graph: bevy_transform + bevy_hierarchy without the ECS |
+| =Offler.Gizmos=         | both gizmo modes over pure =GizmoData=: the immediate overlay and retained gizmo assets |
 | =Offler.Gfx.Platform=   | the =Platform= interface and the input =Event= vocabulary           |
 | =Offler.Web.Js=         | browser primitives: opaque handles, DOM, rAF, input listeners       |
 | =Offler.Web.Gl2/Gpu=    | the two browser backends                                            |
@@ -96,18 +97,19 @@ desktop adds.
     rendererName      : r -> String
     createMesh        : {t : Topology} -> r -> Verts t -> IO (MeshHandle t)
     createMeshIndexed : r -> Verts Triangles -> Indices -> IO (MeshHandle Triangles)
+    freeMesh          : r -> MeshHandle t -> IO ()   -- stale handles then draw nothing
     loadTexture       : r -> TextureSource -> IO TextureHandle    -- immediate; white until decoded
     registerMaterial  : Material m => r -> ...proofs... -> IO (MaterialId m)
     addMaterial       : Material m => r -> MaterialId m -> m -> IO (Handle m)
     updateMaterial    : Material m => r -> Handle m -> m -> IO (Handle m)
-    setLines          : r -> Verts Lines -> IO ()                 -- the gizmo overlay
+    setGizmos         : r -> Verts Lines -> IO ()   -- gizmo plumbing; use Offler.Gizmos
     aspect            : r -> IO Double
     beginFrame        : r -> Camera -> Lights -> (time : Double) -> L1 IO (LMaybe f)
     draw              : Material m => r -> (1 frame : f) -> MeshHandle t -> Handle m -> Mat4
                      -> {auto 0 ok : TopoOk t m} -> L1 IO f
     drawMany          : Material m => r -> (1 frame : f) -> MeshHandle t -> Handle m -> List Mat4
                      -> {auto 0 ok : TopoOk t m} -> L1 IO f
-    drawLines         : r -> (1 frame : f) -> Color -> L1 IO f
+    drawGizmos        : r -> (1 frame : f) -> L1 IO f
     endFrame          : r -> (1 frame : f) -> L IO ()
 
   interface Platform p where
@@ -179,7 +181,8 @@ by mechanism:
 | pipeline specialisation per mesh key  | pipeline variants per (topology × alpha phase), the variant *chosen by the type checker*; a line mesh with a material lacking =vs_line= is a missing =So=, not a runtime error (=TopoOk=) |
 | =Indices= / indexed meshes            | =createMeshIndexed=: shared vertices named by a u32 list |
 | =bevy_transform= + =bevy_hierarchy=   | =Offler.Scene=: a retained tree, =Transform= per node, propagation to world matrices |
-| =bevy_gizmos=                         | =setLines=/=drawLines=: the immediate-mode overlay, for geometry that genuinely changes per frame |
+| =bevy_gizmos= (immediate)             | =Offler.Gizmos=: =gLine=/=gArrow=/=gAxes=/=gCircle=/=gSphere=/=gCuboid=/=gGrid= over pure =GizmoData=; =drawGizmoData= + =drawGizmos= render the frame's worth, per-vertex coloured, in one blended call |
+| =GizmoAsset= + =Gizmo= (retained, 0.14) | =gizmoAsset=: freeze =GizmoData= into a =Lines= mesh drawn by =GizmoMaterial= (an ordinary =Material= whose =vs_line= keeps the per-vertex colours; the tint is the =Gizmo= config), spawn the =Drawable= as a scene node, move it by transform. =retainGizmos= gives the bare mesh for a custom material's =vs_line= |
 
 Where bevy derives the GPU-facing description with a proc macro, offler
 derives it in the type checker. A material type supplies its uniform block
@@ -454,8 +457,14 @@ window. The script encodes the two traps: SDL3 prefers Wayland whenever
   the orrery's notes conclude.
 - The per-frame draw cap is =maxObjects = 10240= slots of 256 bytes, in each
   of the object and material buffers.
-- Meshes, textures and material assets are never freed; the intended
-  pattern is create-at-startup. Assets share the 10 240-slot budget.
+- Meshes can be released with =freeMesh=: the GPU buffers go, the table
+  entry becomes a tombstone, and draws against stale handles are silent
+  no-ops -- the honest runtime seam, since unrestricted handles cannot make
+  use-after-free a type error the way the linear frame token can (bevy
+  frees on refcount for the same reason). Textures and material assets are
+  still permanent: their views live inside cached bind groups, so freeing
+  them needs the =texGen= rebuild machinery extended, not just a delete.
+  Assets share the 10 240-slot budget.
 - =Escape= closing the native window is platform policy, not scene code.
 
 * Testing

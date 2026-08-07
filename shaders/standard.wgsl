@@ -15,14 +15,15 @@ struct VsOut {
   @location(3) uv    : vec2<f32>,
 };
 
-// Line meshes carry only a position; the standard material draws them as
-// their (textured-at-origin, patterned) base colour -- pair with `unlit`.
+// Line meshes: the standard material draws them as their
+// (textured-at-origin, patterned) base colour, ignoring the vertex colour
+// -- pair with `unlit`. A custom material's vs_line may read v.color.
 @vertex
 fn vs_line(v : LineIn) -> VsOut {
   var out : VsOut;
-  let world = o.model * vec4<f32>(v.pos, 1.0);
+  let world = o.model * vec4<f32>(v.pos.xyz, 1.0);
   out.world = world.xyz;
-  out.obj = v.pos;
+  out.obj = v.pos.xyz;
   out.nrm = vec3<f32>(0.0, 1.0, 0.0);
   out.uv = vec2<f32>(0.0, 0.0);
   out.pos = g.proj * g.view * world;

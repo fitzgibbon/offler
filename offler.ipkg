@@ -15,6 +15,7 @@ modules = Offler.Camera
         , Offler.Gfx.Platform
         , Offler.Gfx.Renderer
         , Offler.Gfx.Uniform
+        , Offler.Gizmos
         , Offler.Light
         , Offler.Material
         , Offler.Math
