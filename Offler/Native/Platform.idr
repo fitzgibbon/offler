@@ -33,6 +33,30 @@ prim__eventWheel : AnyPtr -> PrimIO Double
 %foreign "C:offler_event_button,liboffler"
 prim__eventButton : AnyPtr -> PrimIO Int
 
+%foreign "C:offler_event_dx,liboffler"
+prim__eventDX : AnyPtr -> PrimIO Double
+
+%foreign "C:offler_event_dy,liboffler"
+prim__eventDY : AnyPtr -> PrimIO Double
+
+%foreign "C:offler_event_id,liboffler"
+prim__eventId : AnyPtr -> PrimIO Int
+
+%foreign "C:offler_gamepads,liboffler"
+prim__gamepads : AnyPtr -> PrimIO String
+
+%foreign "C:offler_set_pointer_lock,liboffler"
+prim__setPointerLock : AnyPtr -> Int -> PrimIO ()
+
+%foreign "C:offler_set_cursor_visible,liboffler"
+prim__setCursorVisible : AnyPtr -> Int -> PrimIO ()
+
+%foreign "C:offler_surface_w,liboffler"
+prim__surfaceW : AnyPtr -> PrimIO Double
+
+%foreign "C:offler_surface_h,liboffler"
+prim__surfaceH : AnyPtr -> PrimIO Double
+
 %foreign "C:offler_time,liboffler"
 prim__time : AnyPtr -> PrimIO Double
 
@@ -102,7 +126,27 @@ drain p acc = do
             drain p (PointerUp (buttonOf b) x y :: acc)
     8 => do d <- primIO (prim__eventWheel p.ctx)
             drain p (Wheel d :: acc)
+    9 => do dx <- primIO (prim__eventDX p.ctx)
+            dy <- primIO (prim__eventDY p.ctx)
+            drain p (PointerDelta dx dy :: acc)
+    10 => drain p (!(finger TouchStart) :: acc)
+    11 => drain p (!(finger TouchMove) :: acc)
+    12 => drain p (!(finger TouchEnd) :: acc)
+    13 => do i <- primIO (prim__eventId p.ctx)
+             n <- primIO (prim__eventKey p.ctx)
+             drain p (GamepadConnected i n :: acc)
+    14 => do i <- primIO (prim__eventId p.ctx)
+             drain p (GamepadDisconnected i :: acc)
+    15 => do i <- primIO (prim__eventId p.ctx)
+             drain p (PointerLockChanged (i /= 0) :: acc)
     _ => drain p acc
+  where
+    finger : (Int -> Double -> Double -> Event) -> IO Event
+    finger mk = do
+      i <- primIO (prim__eventId p.ctx)
+      x <- primIO (prim__eventX p.ctx)
+      y <- primIO (prim__eventY p.ctx)
+      pure (mk i x y)
 
 loop : NativePlatform -> (Double -> IO ()) -> IO ()
 loop p k = do
@@ -119,6 +163,14 @@ Platform NativePlatform where
   runLoop p k = loop p k
 
   pollEvents p = drain p []
+
+  gamepads p = parseGamepads <$> primIO (prim__gamepads p.ctx)
+
+  setPointerLock p on = primIO (prim__setPointerLock p.ctx (if on then 1 else 0))
+
+  setCursorVisible p on = primIO (prim__setCursorVisible p.ctx (if on then 1 else 0))
+
+  surfaceSize p = [| (primIO (prim__surfaceW p.ctx), primIO (prim__surfaceH p.ctx)) |]
 
 ||| The window-title status line, slots composed in a fixed order.
 ||| Deliberately not a `Platform` member -- it is example chrome, not a

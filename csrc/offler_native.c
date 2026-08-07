@@ -148,9 +148,20 @@ typedef struct {
   WGPURenderPipeline boundPipe;
 
   /* The event being reported, refreshed by each offler_poll. */
-  char eventKey[32];
+  char eventKey[64];
   double eventX, eventY, eventWheel;
+  double eventDX, eventDY;
   int eventButton;
+  int eventId;                /* finger id or gamepad instance id */
+  int pendingCode;            /* second code for a one-event pair (move+delta) */
+  int lockChange;             /* 0 none, 1 released, 2 acquired: reported by poll */
+  bool relMouse;
+
+  /* Gamepads opened on ADDED, closed on REMOVED, sampled by
+   * offler_gamepads into the wire form parseGamepads reads. */
+  SDL_Gamepad **pads;
+  int padCount, padCap;
+  char padSpec[4096];
 } Ctx;
 
 /* ------------------------------------------------------------------ helpers */
@@ -510,7 +521,7 @@ void *offler_init(const char *title,
   c->lineAttrCount = parse_attrs(lineVertSpec, c->lineAttrs);
   c->instAttrCount = parse_attrs(instVertSpec, c->instAttrs);
 
-  if (!SDL_Init(SDL_INIT_VIDEO)) {
+  if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
     fprintf(stderr, "offler: SDL_Init: %s\n", SDL_GetError());
     free(c); return NULL;
   }
@@ -744,6 +755,9 @@ double offler_aspect(void *p) {
   return (double)c->width / (double)c->height;
 }
 
+double offler_surface_w(void *p) { return (double)((Ctx *)p)->width; }
+double offler_surface_h(void *p) { return (double)((Ctx *)p)->height; }
+
 /* SDL key names, translated to the browser's `KeyboardEvent.key` vocabulary
  * so a scene matches on one spelling. */
 static void set_key(Ctx *c, SDL_Keycode key) {
@@ -770,10 +784,60 @@ static void set_pointer(Ctx *c, float x, float y) {
   c->eventY = (double)y * c->height / wh;
 }
 
+/* Touch coordinates arrive normalised 0..1; report drawing-buffer pixels
+ * like everything else. */
+static void set_finger(Ctx *c, const SDL_TouchFingerEvent *t) {
+  c->eventId = (int)t->fingerID;
+  c->eventX = (double)t->x * c->width;
+  c->eventY = (double)t->y * c->height;
+}
+
+static void pad_open(Ctx *c, SDL_JoystickID id) {
+  SDL_Gamepad *g = SDL_OpenGamepad(id);
+  if (!g) return;
+  if (c->padCount == c->padCap) {
+    c->padCap = c->padCap ? c->padCap * 2 : 4;
+    c->pads = (SDL_Gamepad **)realloc(c->pads, sizeof(SDL_Gamepad *) * c->padCap);
+  }
+  c->pads[c->padCount++] = g;
+  const char *n = SDL_GetGamepadName(g);
+  snprintf(c->eventKey, sizeof(c->eventKey), "%s", n ? n : "gamepad");
+  c->eventId = (int)id;
+}
+
+static void pad_close(Ctx *c, SDL_JoystickID id) {
+  for (int i = 0; i < c->padCount; i++) {
+    if (SDL_GetGamepadID(c->pads[i]) == id) {
+      SDL_CloseGamepad(c->pads[i]);
+      c->pads[i] = c->pads[--c->padCount];
+      break;
+    }
+  }
+  c->eventId = (int)id;
+}
+
 /* One event per call, 0 when the queue is empty.
- * 1 close, 2 resize, 3 keydown, 4 keyup, 5 move, 6 down, 7 up, 8 wheel. */
+ * 1 close, 2 resize, 3 keydown, 4 keyup, 5 move, 6 down, 7 up, 8 wheel,
+ * 9 pointer delta, 10 finger down, 11 finger motion, 12 finger up,
+ * 13 gamepad added, 14 gamepad removed, 15 pointer-lock change.
+ *
+ * A mouse motion is two of offler's events (absolute move and relative
+ * delta), so it parks the second code in pendingCode; under relative mouse
+ * mode only the delta is delivered, since the absolute position is pinned.
+ * Mouse events synthesised from touches are dropped: fingers arrive as
+ * finger events, never as pointers, matching the browser backend. */
 int offler_poll(void *p) {
   Ctx *c = (Ctx *)p;
+  if (c->pendingCode) {
+    int r = c->pendingCode;
+    c->pendingCode = 0;
+    return r;
+  }
+  if (c->lockChange) {
+    c->eventId = c->lockChange == 2;
+    c->lockChange = 0;
+    return 15;
+  }
   SDL_Event e;
   while (SDL_PollEvent(&e)) {
     switch (e.type) {
@@ -782,10 +846,22 @@ int offler_poll(void *p) {
       case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED: return 2;
       case SDL_EVENT_KEY_DOWN: set_key(c, e.key.key); return 3;
       case SDL_EVENT_KEY_UP: set_key(c, e.key.key); return 4;
-      case SDL_EVENT_MOUSE_MOTION:
-        set_pointer(c, e.motion.x, e.motion.y); return 5;
+      case SDL_EVENT_MOUSE_MOTION: {
+        if (e.motion.which == SDL_TOUCH_MOUSEID) break;
+        int ww = 1, wh = 1;
+        SDL_GetWindowSize(c->window, &ww, &wh);
+        if (ww < 1) ww = 1;
+        if (wh < 1) wh = 1;
+        c->eventDX = (double)e.motion.xrel * c->width / ww;
+        c->eventDY = (double)e.motion.yrel * c->height / wh;
+        if (c->relMouse) return 9;
+        set_pointer(c, e.motion.x, e.motion.y);
+        c->pendingCode = 9;
+        return 5;
+      }
       case SDL_EVENT_MOUSE_BUTTON_DOWN:
       case SDL_EVENT_MOUSE_BUTTON_UP:
+        if (e.button.which == SDL_TOUCH_MOUSEID) break;
         set_pointer(c, e.button.x, e.button.y);
         c->eventButton = e.button.button == SDL_BUTTON_LEFT ? 0
                        : e.button.button == SDL_BUTTON_MIDDLE ? 1
@@ -793,8 +869,15 @@ int offler_poll(void *p) {
                        : (int)e.button.button;
         return e.type == SDL_EVENT_MOUSE_BUTTON_DOWN ? 6 : 7;
       case SDL_EVENT_MOUSE_WHEEL:
+        if (e.wheel.which == SDL_TOUCH_MOUSEID) break;
         c->eventWheel = (double)e.wheel.y;
         return 8;
+      case SDL_EVENT_FINGER_DOWN: set_finger(c, &e.tfinger); return 10;
+      case SDL_EVENT_FINGER_MOTION: set_finger(c, &e.tfinger); return 11;
+      case SDL_EVENT_FINGER_UP:
+      case SDL_EVENT_FINGER_CANCELED: set_finger(c, &e.tfinger); return 12;
+      case SDL_EVENT_GAMEPAD_ADDED: pad_open(c, e.gdevice.which); return 13;
+      case SDL_EVENT_GAMEPAD_REMOVED: pad_close(c, e.gdevice.which); return 14;
       default: break;
     }
   }
@@ -804,8 +887,71 @@ int offler_poll(void *p) {
 const char *offler_event_key(void *p) { return ((Ctx *)p)->eventKey; }
 double offler_event_x(void *p) { return ((Ctx *)p)->eventX; }
 double offler_event_y(void *p) { return ((Ctx *)p)->eventY; }
+double offler_event_dx(void *p) { return ((Ctx *)p)->eventDX; }
+double offler_event_dy(void *p) { return ((Ctx *)p)->eventDY; }
 double offler_event_wheel(void *p) { return ((Ctx *)p)->eventWheel; }
 int offler_event_button(void *p) { return ((Ctx *)p)->eventButton; }
+int offler_event_id(void *p) { return ((Ctx *)p)->eventId; }
+
+/* Sample every opened pad into the wire form parseGamepads reads: eight
+ * comma-separated numbers, then the name (semicolons scrubbed so the
+ * record separator survives; commas in a name are fine, it parses last). */
+const char *offler_gamepads(void *p) {
+  Ctx *c = (Ctx *)p;
+  size_t off = 0;
+  c->padSpec[0] = '\0';
+  for (int i = 0; i < c->padCount && off + 160 < sizeof(c->padSpec); i++) {
+    SDL_Gamepad *g = c->pads[i];
+    double ax[6];
+    static const SDL_GamepadAxis axes[6] = {
+      SDL_GAMEPAD_AXIS_LEFTX, SDL_GAMEPAD_AXIS_LEFTY,
+      SDL_GAMEPAD_AXIS_RIGHTX, SDL_GAMEPAD_AXIS_RIGHTY,
+      SDL_GAMEPAD_AXIS_LEFT_TRIGGER, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER,
+    };
+    for (int a = 0; a < 6; a++) {
+      double v = (double)SDL_GetGamepadAxis(g, axes[a]) / 32767.0;
+      ax[a] = v < -1.0 ? -1.0 : v;
+    }
+    /* Bit order matches Offler.Gfx.Platform.buttonBit. */
+    static const SDL_GamepadButton bits[14] = {
+      SDL_GAMEPAD_BUTTON_SOUTH, SDL_GAMEPAD_BUTTON_EAST,
+      SDL_GAMEPAD_BUTTON_WEST, SDL_GAMEPAD_BUTTON_NORTH,
+      SDL_GAMEPAD_BUTTON_LEFT_SHOULDER, SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER,
+      SDL_GAMEPAD_BUTTON_BACK, SDL_GAMEPAD_BUTTON_START,
+      SDL_GAMEPAD_BUTTON_LEFT_STICK, SDL_GAMEPAD_BUTTON_RIGHT_STICK,
+      SDL_GAMEPAD_BUTTON_DPAD_UP, SDL_GAMEPAD_BUTTON_DPAD_DOWN,
+      SDL_GAMEPAD_BUTTON_DPAD_LEFT, SDL_GAMEPAD_BUTTON_DPAD_RIGHT,
+    };
+    int mask = 0;
+    for (int b = 0; b < 14; b++)
+      if (SDL_GetGamepadButton(g, bits[b])) mask |= 1 << b;
+    const char *name = SDL_GetGamepadName(g);
+    char clean[96];
+    snprintf(clean, sizeof(clean), "%s", name ? name : "gamepad");
+    for (char *s = clean; *s; s++) if (*s == ';') *s = ' ';
+    off += (size_t)snprintf(c->padSpec + off, sizeof(c->padSpec) - off,
+                            "%s%d,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%d,%s",
+                            i ? ";" : "", (int)SDL_GetGamepadID(g),
+                            ax[0], ax[1], ax[2], ax[3], ax[4], ax[5],
+                            mask, clean);
+  }
+  return c->padSpec;
+}
+
+/* SDL grants or releases synchronously, so the change event -- the same
+ * one the browser delivers asynchronously -- is queued right here. */
+void offler_set_pointer_lock(void *p, int on) {
+  Ctx *c = (Ctx *)p;
+  if (SDL_SetWindowRelativeMouseMode(c->window, on != 0)) {
+    c->relMouse = on != 0;
+    c->lockChange = on ? 2 : 1;
+  }
+}
+
+void offler_set_cursor_visible(void *p, int on) {
+  (void)p;
+  if (on) SDL_ShowCursor(); else SDL_HideCursor();
+}
 
 void offler_resize(void *p) { configure((Ctx *)p); }
 
@@ -1272,6 +1418,8 @@ void offler_end(void *p) {
 void offler_quit(void *p) {
   Ctx *c = (Ctx *)p;
   if (!c) return;
+  for (int i = 0; i < c->padCount; i++) SDL_CloseGamepad(c->pads[i]);
+  free(c->pads);
   SDL_DestroyWindow(c->window);
   SDL_Quit();
   free(c->meshes);

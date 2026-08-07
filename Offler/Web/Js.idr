@@ -162,24 +162,75 @@ onKeyUp : (String -> IO ()) -> IO ()
 onKeyUp k = ignore (primIO (prim__onKeyUp (\s => toPrim (k s >> pure 0))))
 
 ||| Pointer position in drawing-buffer pixels: CSS offset times the device
-||| pixel ratio, matching what the native platform reports.
-%foreign "javascript:lambda:(c,f)=>{c.addEventListener('pointermove',e=>{const r=c.getBoundingClientRect();f((e.clientX-r.left)*devicePixelRatio)((e.clientY-r.top)*devicePixelRatio)()});return 0}"
-prim__onPointerMove : JSVal -> (Double -> Double -> PrimIO Int) -> PrimIO Int
+||| pixel ratio, matching what the native platform reports. Also carries the
+||| relative motion and whether the pointer is locked to the canvas, so the
+||| platform can decide which events to synthesise. Touches are filtered
+||| out: they arrive through the touch listeners, never as pointers.
+%foreign "javascript:lambda:(c,f)=>{c.addEventListener('pointermove',e=>{if(e.pointerType==='touch')return;const r=c.getBoundingClientRect();const l=document.pointerLockElement===c?1:0;f(l)((e.clientX-r.left)*devicePixelRatio)((e.clientY-r.top)*devicePixelRatio)(e.movementX*devicePixelRatio)(e.movementY*devicePixelRatio)()});return 0}"
+prim__onPointerMove : JSVal -> (Int -> Double -> Double -> Double -> Double -> PrimIO Int) -> PrimIO Int
 
-%foreign "javascript:lambda:(c,f)=>{c.addEventListener('pointerdown',e=>{const r=c.getBoundingClientRect();f(e.button)((e.clientX-r.left)*devicePixelRatio)((e.clientY-r.top)*devicePixelRatio)()});return 0}"
+%foreign "javascript:lambda:(c,f)=>{c.addEventListener('pointerdown',e=>{if(e.pointerType==='touch')return;const r=c.getBoundingClientRect();f(e.button)((e.clientX-r.left)*devicePixelRatio)((e.clientY-r.top)*devicePixelRatio)()});return 0}"
 prim__onPointerDown : JSVal -> (Int -> Double -> Double -> PrimIO Int) -> PrimIO Int
 
-%foreign "javascript:lambda:(c,f)=>{c.addEventListener('pointerup',e=>{const r=c.getBoundingClientRect();f(e.button)((e.clientX-r.left)*devicePixelRatio)((e.clientY-r.top)*devicePixelRatio)()});return 0}"
+%foreign "javascript:lambda:(c,f)=>{c.addEventListener('pointerup',e=>{if(e.pointerType==='touch')return;const r=c.getBoundingClientRect();f(e.button)((e.clientX-r.left)*devicePixelRatio)((e.clientY-r.top)*devicePixelRatio)()});return 0}"
 prim__onPointerUp : JSVal -> (Int -> Double -> Double -> PrimIO Int) -> PrimIO Int
+
+||| Each changed finger reported separately: identifier, then position in
+||| drawing-buffer pixels. `preventDefault` keeps a game's touches from
+||| scrolling or zooming the page, which is why these are not passive.
+%foreign "javascript:lambda:(c,f)=>{c.addEventListener('touchstart',e=>{e.preventDefault();const r=c.getBoundingClientRect();for(const t of e.changedTouches)f(t.identifier)((t.clientX-r.left)*devicePixelRatio)((t.clientY-r.top)*devicePixelRatio)()},{passive:false});return 0}"
+prim__onTouchStart : JSVal -> (Int -> Double -> Double -> PrimIO Int) -> PrimIO Int
+
+%foreign "javascript:lambda:(c,f)=>{c.addEventListener('touchmove',e=>{e.preventDefault();const r=c.getBoundingClientRect();for(const t of e.changedTouches)f(t.identifier)((t.clientX-r.left)*devicePixelRatio)((t.clientY-r.top)*devicePixelRatio)()},{passive:false});return 0}"
+prim__onTouchMove : JSVal -> (Int -> Double -> Double -> PrimIO Int) -> PrimIO Int
+
+||| `touchend` and `touchcancel` both: either way the finger is done.
+%foreign "javascript:lambda:(c,f)=>{const h=e=>{const r=c.getBoundingClientRect();for(const t of e.changedTouches)f(t.identifier)((t.clientX-r.left)*devicePixelRatio)((t.clientY-r.top)*devicePixelRatio)()};c.addEventListener('touchend',h);c.addEventListener('touchcancel',h);return 0}"
+prim__onTouchEnd : JSVal -> (Int -> Double -> Double -> PrimIO Int) -> PrimIO Int
+
+%foreign "javascript:lambda:(f)=>{addEventListener('gamepadconnected',e=>{f(e.gamepad.index)(e.gamepad.id)()});return 0}"
+prim__onGamepadConnected : (Int -> String -> PrimIO Int) -> PrimIO Int
+
+%foreign "javascript:lambda:(f)=>{addEventListener('gamepaddisconnected',e=>{f(e.gamepad.index)()});return 0}"
+prim__onGamepadDisconnected : (Int -> PrimIO Int) -> PrimIO Int
+
+||| Snapshot every pad into the wire form `parseGamepads` reads: standard
+||| mapping, buttons folded to a mask, triggers analog, name last so its
+||| commas survive.
+%foreign "javascript:lambda:()=>{const gs=navigator.getGamepads?navigator.getGamepads():[];const recs=[];for(const g of gs){if(!g)continue;const a=g.axes,b=g.buttons;const v=i=>b[i]?b[i].value:0;const p=i=>b[i]&&b[i].pressed?1:0;const order=[0,1,2,3,4,5,8,9,10,11,12,13,14,15];let mask=0;for(let k=0;k<14;k++)if(p(order[k]))mask|=1<<k;recs.push([g.index,a[0]||0,a[1]||0,a[2]||0,a[3]||0,v(6),v(7),mask,String(g.id).replace(/;/g,' ')].join(','))}return recs.join(';')}"
+prim__gamepads : PrimIO String
+
+||| Request is only granted shortly after a real user gesture, and the
+||| promise rejection when it is not is deliberately swallowed: a declined
+||| lock is a fact the scene observes (no lock, `PointerMove` continues),
+||| not an error.
+%foreign "javascript:lambda:(c,on)=>{if(on){try{const r=c.requestPointerLock();if(r&&r.catch)r.catch(()=>{})}catch(e){}}else if(document.exitPointerLock)document.exitPointerLock();return 0}"
+prim__pointerLock : JSVal -> Int -> PrimIO Int
+
+||| Fires on grant *and* release, including the browser's own Escape exit --
+||| the one place the real lock state is knowable.
+%foreign "javascript:lambda:(c,f)=>{document.addEventListener('pointerlockchange',()=>{f(document.pointerLockElement===c?1:0)()});return 0}"
+prim__onPointerLockChange : JSVal -> (Int -> PrimIO Int) -> PrimIO Int
+
+%foreign "javascript:lambda:(c,on)=>{c.style.cursor=on?'':'none';return 0}"
+prim__cursorVisible : JSVal -> Int -> PrimIO Int
+
+%foreign "javascript:lambda:(c)=>c.width"
+prim__surfaceW : JSVal -> PrimIO Double
+
+%foreign "javascript:lambda:(c)=>c.height"
+prim__surfaceH : JSVal -> PrimIO Double
 
 ||| Wheel, in lines-ish units, positive away from the user.
 %foreign "javascript:lambda:(c,f)=>{c.addEventListener('wheel',e=>{f(-e.deltaY*0.01)()},{passive:true});return 0}"
 prim__onWheel : JSVal -> (Double -> PrimIO Int) -> PrimIO Int
 
+||| The callback sees: locked?, absolute x y, relative dx dy.
 export
-onPointerMove : JSVal -> (Double -> Double -> IO ()) -> IO ()
+onPointerMove : JSVal -> (Bool -> Double -> Double -> Double -> Double -> IO ()) -> IO ()
 onPointerMove c k =
-  ignore (primIO (prim__onPointerMove c (\x, y => toPrim (k x y >> pure 0))))
+  ignore (primIO (prim__onPointerMove c
+    (\l, x, y, dx, dy => toPrim (k (l /= 0) x y dx dy >> pure 0))))
 
 export
 onPointerDown : JSVal -> (Int -> Double -> Double -> IO ()) -> IO ()
@@ -194,6 +245,54 @@ onPointerUp c k =
 export
 onWheel : JSVal -> (Double -> IO ()) -> IO ()
 onWheel c k = ignore (primIO (prim__onWheel c (\d => toPrim (k d >> pure 0))))
+
+export
+onTouchStart : JSVal -> (Int -> Double -> Double -> IO ()) -> IO ()
+onTouchStart c k =
+  ignore (primIO (prim__onTouchStart c (\i, x, y => toPrim (k i x y >> pure 0))))
+
+export
+onTouchMove : JSVal -> (Int -> Double -> Double -> IO ()) -> IO ()
+onTouchMove c k =
+  ignore (primIO (prim__onTouchMove c (\i, x, y => toPrim (k i x y >> pure 0))))
+
+export
+onTouchEnd : JSVal -> (Int -> Double -> Double -> IO ()) -> IO ()
+onTouchEnd c k =
+  ignore (primIO (prim__onTouchEnd c (\i, x, y => toPrim (k i x y >> pure 0))))
+
+export
+onGamepadConnected : (Int -> String -> IO ()) -> IO ()
+onGamepadConnected k =
+  ignore (primIO (prim__onGamepadConnected (\i, n => toPrim (k i n >> pure 0))))
+
+export
+onGamepadDisconnected : (Int -> IO ()) -> IO ()
+onGamepadDisconnected k =
+  ignore (primIO (prim__onGamepadDisconnected (\i => toPrim (k i >> pure 0))))
+
+||| The wire form `Offler.Gfx.Platform.parseGamepads` decodes.
+export
+gamepadSpec : IO String
+gamepadSpec = primIO prim__gamepads
+
+export
+pointerLock : JSVal -> Bool -> IO ()
+pointerLock c on = ignore (primIO (prim__pointerLock c (if on then 1 else 0)))
+
+export
+onPointerLockChange : JSVal -> (Bool -> IO ()) -> IO ()
+onPointerLockChange c k =
+  ignore (primIO (prim__onPointerLockChange c (\l => toPrim (k (l /= 0) >> pure 0))))
+
+export
+cursorVisible : JSVal -> Bool -> IO ()
+cursorVisible c on = ignore (primIO (prim__cursorVisible c (if on then 1 else 0)))
+
+||| Drawing-buffer pixels, the space the pointer listeners report in.
+export
+surfacePixels : JSVal -> IO (Double, Double)
+surfacePixels c = [| (primIO (prim__surfaceW c), primIO (prim__surfaceH c)) |]
 
 --------------------------------------------------------------------------------
 -- A growable store of foreign handles

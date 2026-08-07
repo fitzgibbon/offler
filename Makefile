@@ -35,12 +35,13 @@ SOURCES := $(filter-out $(GENERATED),$(wildcard Offler/*.idr Offler/Gfx/*.idr Of
                                      $(wildcard Examples/*.idr Examples/*/*.idr))
 
 # name (bundle/binary) -> module directory
-EXAMPLES := shapes lines swarm flat2d custom
+EXAMPLES := shapes lines swarm flat2d custom chime
 dir_shapes := Shapes
 dir_lines  := Lines
 dir_swarm  := Swarm
 dir_flat2d := Flat2d
 dir_custom := Custom
+dir_chime  := Chime
 
 BUNDLES  := $(foreach e,$(EXAMPLES),$(EXEC)/$(e)-gl2.js $(EXEC)/$(e)-gpu.js)
 NATIVES  := $(foreach e,$(EXAMPLES),$(EXEC)/$(e))
@@ -52,7 +53,7 @@ SHIMS    := $(foreach e,$(EXAMPLES),$(EXEC)/$(e)_app/liboffler.so)
 all: web native
 
 web: $(BUNDLES)
-	@echo "open shapes.html, lines.html, swarm.html or flat2d.html -- no server needed"
+	@echo "open shapes.html, lines.html, swarm.html, flat2d.html, custom.html or chime.html -- no server needed"
 
 native: $(NATIVES) $(SHIMS)
 	@echo "built $(NATIVES) -- run them directly, no environment needed"
@@ -209,7 +210,7 @@ ifeq ($(strip $(WGPU_CFLAGS)$(WGPU_LIBS)),)
   endif
 endif
 
-build/liboffler.so: csrc/offler_native.c Makefile
+build/liboffler.so: csrc/offler_native.c csrc/offler_audio.c Makefile
 	@test -n "$(strip $(SDL_LIBS))" \
 	  || { echo "no SDL3: install it, set SDL3_PREFIX, or use 'nix develop'" >&2; exit 1; }
 	@test -n "$(strip $(WGPU_LIBS))" \
@@ -217,6 +218,6 @@ build/liboffler.so: csrc/offler_native.c Makefile
 	@test -n "$(strip $(STB_CFLAGS))" \
 	  || { echo "no stb: set STB_CFLAGS to point at stb_image.h, or use 'nix develop'" >&2; exit 1; }
 	@mkdir -p $(@D)
-	$(CC) -O2 -fPIC -shared -o $@ $< \
+	$(CC) -O2 -fPIC -shared -o $@ $(filter %.c,$^) \
 	  $(SDL_CFLAGS) $(WGPU_CFLAGS) $(STB_CFLAGS) $(SDL_LIBS) $(WGPU_LIBS)
 	@echo "built $@"
