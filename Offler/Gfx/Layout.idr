@@ -183,7 +183,7 @@ objFields =
   [ MkField "model" Mat4
   , MkField "baseColor" Vec4
   , MkField "emissive" Vec4      -- rgb, w = shading mode
-  , MkField "params" Vec4        -- metallic, roughness, unused, unused
+  , MkField "params" Vec4        -- metallic, roughness, pattern, patternScale
   ]
 
 public export

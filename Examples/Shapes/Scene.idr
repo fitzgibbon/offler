@@ -1,7 +1,9 @@
-||| A row of rotating primitives over a ground plane, lit by one directional
-||| light -- offler's rendition of bevy's `3d_shapes` example. Demonstrates
-||| multiple meshes, the standard lit material across the metallic and
-||| roughness range, and the camera helpers.
+||| Two rows of rotating primitives over a ground plane, lit by one
+||| directional light -- offler's rendition of bevy's `3d_shapes` example.
+||| The front row walks the metallic and roughness ranges; the back row
+||| carries the procedural patterns (checker and value-noise, evaluated in
+||| object space so they turn with the surface). Demonstrates multiple
+||| meshes, the standard lit material, and the camera helpers.
 module Examples.Shapes.Scene
 
 import Data.List
@@ -22,7 +24,7 @@ import Offler.Transform
 
 camera : Camera
 camera = perspectiveCamera
-  (lookingAt (v3 0.0 1.2 0.0) (v3 0.0 1.0 0.0) (at (v3 0.0 4.2 11.0)))
+  (lookingAt (v3 0.0 1.2 (-0.5)) (v3 0.0 1.0 0.0) (at (v3 0.0 6.0 12.5)))
 
 lights : Lights
 lights = MkLights (v3 (-0.5) (-1.0) (-0.4)) (rgb 1.0 0.98 0.92) 0.12
@@ -30,8 +32,8 @@ lights = MkLights (v3 (-0.5) (-1.0) (-0.4)) (rgb 1.0 0.98 0.92) 0.12
 groundMat : Material
 groundMat = withRoughness 0.95 (lit (srgb 0.42 0.44 0.50))
 
-||| One material per shape, walking the hue wheel and the metallic and
-||| roughness ranges together, so the row also reads as a material chart.
+||| One material per front-row shape, walking the hue wheel and the metallic
+||| and roughness ranges together, so the row also reads as a material chart.
 shapeMat : Int -> Material
 shapeMat i =
   let n = cast i
@@ -39,11 +41,26 @@ shapeMat i =
         (withRoughness (0.15 + n * 0.15)
           (lit (hsl (0.02 + n * 0.17) 0.75 0.55)))
 
-shapeModel : Double -> Int -> (count : Int) -> Mat4
-shapeModel t i count =
+||| The back row: the same hues, matte, each carrying a procedural pattern --
+||| checkers and value-noise alternating, at scales that read on shapes this
+||| size.
+patternMat : Int -> Material
+patternMat i =
+  let n = cast i
+      pat = if i `mod` 2 == 0
+              then Checker (3.0 + n * 0.8)
+              else Noise (2.6 + n * 0.7)
+   in withPattern pat
+        (withRoughness 0.55
+          (lit (hsl (0.02 + n * 0.17) 0.75 0.55)))
+
+shapeModel : Double -> (row : Int) -> Int -> (count : Int) -> Mat4
+shapeModel t row i count =
   let x = (cast i - cast (count - 1) * 0.5) * 2.4
-   in matOf (withRotation (fromEulerYXZ (t * 0.6) (t * 0.45) 0.0)
-              (at (v3 x 1.5 0.0)))
+      z = if row == 0 then 1.8 else -2.4
+      spin = if row == 0 then 1.0 else -0.8
+   in matOf (withRotation (fromEulerYXZ (t * 0.6 * spin) (t * 0.45 * spin) 0.0)
+              (at (v3 x 1.5 z)))
 
 ||| The shapes, in bevy's line-up.
 shapeMeshes : List MeshData
@@ -57,12 +74,14 @@ shapeMeshes =
 
 ||| The token is threaded through the recursion: it cannot be duplicated or
 ||| dropped, so this cannot draw a shape outside the pass it was given.
-drawShapes : Renderer r f => r -> (1 frame : f) -> Double -> (count : Int)
-          -> List (Int, MeshHandle) -> L1 IO f
-drawShapes r fr _ _ [] = pure1 fr
-drawShapes r fr t count ((i, m) :: rest) = do
-  fr' <- draw r fr m (shapeModel t i count) (shapeMat i)
-  drawShapes r fr' t count rest
+||| Row 0 wears the plain material chart, row 1 the procedural patterns.
+drawShapes : Renderer r f => r -> (1 frame : f) -> Double -> (row : Int)
+          -> (count : Int) -> List (Int, MeshHandle) -> L1 IO f
+drawShapes r fr _ _ _ [] = pure1 fr
+drawShapes r fr t row count ((i, m) :: rest) = do
+  let mat = if row == 0 then shapeMat i else patternMat i
+  fr' <- draw r fr m (shapeModel t row i count) mat
+  drawShapes r fr' t row count rest
 
 handle : Renderer r f => r -> Event -> IO ()
 handle r Resized = resize r
@@ -78,8 +97,9 @@ frame r p ground shapes fps t = do
   Just fr <- beginFrame r camera lights t
     | Nothing => pure ()
   fr1 <- draw r fr ground identity groundMat
-  fr2 <- drawShapes r fr1 t (cast (length shapes)) shapes
-  endFrame r fr2
+  fr2 <- drawShapes r fr1 t 0 (cast (length shapes)) shapes
+  fr3 <- drawShapes r fr2 t 1 (cast (length shapes)) shapes
+  endFrame r fr3
 
 export
 run : Renderer r f => Platform p => r -> p -> IO ()
@@ -89,5 +109,5 @@ run r p = do
   let indexed = zip (range 0 (cast (length shapes) - 1)) shapes
   fps <- newFps
   setStatus p "backend" (rendererName r)
-  setStatus p "stats" (show (length shapes) ++ " shapes + ground")
+  setStatus p "stats" (show (length shapes * 2) ++ " shapes + ground; back row patterned")
   runLoop p (\t => LIO.run (frame r p ground indexed fps t) >> reportFps p fps t)

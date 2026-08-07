@@ -134,7 +134,8 @@ setObj r model mat = do
       em = mat.emissive
   ignore (primIO (prim__vec4 r.gl r.uBaseColor bc.red bc.green bc.blue bc.alpha))
   ignore (primIO (prim__vec4 r.gl r.uEmissive em.red em.green em.blue (modeCode mat)))
-  ignore (primIO (prim__vec4 r.gl r.uParams mat.metallic mat.roughness 0.0 0.0))
+  ignore (primIO (prim__vec4 r.gl r.uParams mat.metallic mat.roughness
+                             (patternCode mat.pattern) (patternScale mat.pattern)))
 
 ||| Bind a mesh's buffer to the attributes and return its vertex count.
 bindMesh : Gl2 -> MeshHandle -> IO Int

@@ -97,7 +97,8 @@ pokeObject a (MkSlot o) model mat = do
         mat.baseColor.red mat.baseColor.green mat.baseColor.blue mat.baseColor.alpha
   poke4 a (sub objEmissiveFloat o)
         mat.emissive.red mat.emissive.green mat.emissive.blue (modeCode mat)
-  poke4 a (sub objParamsFloat o) mat.metallic mat.roughness 0.0 0.0
+  poke4 a (sub objParamsFloat o) mat.metallic mat.roughness
+        (patternCode mat.pattern) (patternScale mat.pattern)
 
 ||| A slot asserted rather than tested, private to this module: what the
 ||| batch loop below steps with once its bound is dealt with. `slot` remains
