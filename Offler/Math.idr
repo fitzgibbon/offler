@@ -298,6 +298,17 @@ public export
 tau : Double
 tau = 6.28318530717958647692
 
+||| The two-argument arctangent the Prelude lacks: the angle of (x, y) in
+||| (-pi, pi].
+public export
+atan2 : (y : Double) -> (x : Double) -> Double
+atan2 y x =
+  if x > 0.0 then atan (y / x)
+  else if x < 0.0 then (if y >= 0.0 then atan (y / x) + pi else atan (y / x) - pi)
+  else if y > 0.0 then pi / 2.0
+  else if y < 0.0 then -(pi / 2.0)
+  else 0.0
+
 --------------------------------------------------------------------------------
 -- Iteration
 

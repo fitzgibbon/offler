@@ -7,7 +7,6 @@ module Examples.Swarm.MainGl2
 import Examples.Swarm.Scene
 import Offler.Gfx.Platform
 import Offler.Gfx.Renderer
-import Offler.Shaders
 import Offler.Web.Gl2
 import Offler.Web.Js
 import Offler.Web.Platform
@@ -24,5 +23,5 @@ main = do
     else do disable "flip"
             setText "note" "WebGPU unavailable in this browser"
   p <- initWeb "gl"
-  r <- initGl2 "gl" vertSrc fragSrc
+  r <- initGl2 "gl"
   run r p

@@ -1,10 +1,7 @@
-||| Entry point for the WebGL2 bundle. The backend is fixed at compile time,
-||| so this build contains no WebGPU code at all and the renderer is
-||| monomorphic; the footer button navigates to the other bundle rather than
-||| switching anything at run time.
-module Examples.Lines.MainGl2
+||| Entry point for the WebGL2 bundle.
+module Examples.Custom.MainGl2
 
-import Examples.Lines.Scene
+import Examples.Custom.Scene
 import Offler.Gfx.Platform
 import Offler.Gfx.Renderer
 import Offler.Web.Gl2

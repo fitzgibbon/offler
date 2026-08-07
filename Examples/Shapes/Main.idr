@@ -7,13 +7,12 @@ import Offler.Gfx.Platform
 import Offler.Gfx.Renderer
 import Offler.Native.Platform
 import Offler.Native.Wgpu
-import Offler.Shaders
 
 %default covering
 
 main : IO ()
 main = do
-  Just r <- initWgpu "Shapes" wgslSrc
+  Just r <- initWgpu "Shapes"
     | Nothing => putStrLn "shapes: could not open a window or start wgpu."
   p <- initNative "Shapes" (ctxOf r)
   putStrLn "shapes: Esc quits."

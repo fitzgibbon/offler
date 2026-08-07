@@ -1,13 +1,18 @@
-// VertexIn, LineIn, Globals, Obj and their @group/@binding declarations are
-// generated from Offler.Gfx.Layout and prepended at pipeline creation, so
-// nothing here can drift from the offsets the Idris side pokes at or the
-// layout the pipeline is built with.
+// The standard material's authored body. Everything it references --
+// VertexIn, Globals g, Obj o, Mat m, t_base_color/s_base_color, offlerAlpha
+// -- is generated from Offler.Gfx.Layout and the material's field list and
+// prepended at registration, so nothing here can drift from the offsets the
+// Idris side pokes at or the layout the pipelines are built with.
+//
+// Mat, for this material: baseColor (vec4), emissive (rgb + unlit flag),
+// params (metallic, roughness, pattern, patternScale).
 
 struct VsOut {
   @builtin(position) pos : vec4<f32>,
   @location(0) nrm   : vec3<f32>,
   @location(1) world : vec3<f32>,
   @location(2) obj   : vec3<f32>,
+  @location(3) uv    : vec2<f32>,
 };
 
 @vertex
@@ -20,18 +25,7 @@ fn vs(v : VertexIn) -> VsOut {
   out.obj = v.pos;
   // Approximate for non-uniform scale; exact for rigid-plus-uniform.
   out.nrm = (o.model * vec4<f32>(v.normal, 0.0)).xyz;
-  out.pos = g.proj * g.view * world;
-  return out;
-}
-
-// Lines carry no normal; they are drawn unlit, so any value serves.
-@vertex
-fn vs_line(v : LineIn) -> VsOut {
-  var out : VsOut;
-  let world = o.model * vec4<f32>(v.pos, 1.0);
-  out.world = world.xyz;
-  out.obj = v.pos;
-  out.nrm = vec3<f32>(0.0, 1.0, 0.0);
+  out.uv = v.uv;
   out.pos = g.proj * g.view * world;
   return out;
 }
@@ -71,9 +65,9 @@ fn fbm(p0 : vec3<f32>) -> f32 {
 // Procedural modulation of the base colour, over object space so it sticks
 // to the surface. 0 plain, 1 checker, 2 value-noise fbm.
 fn patternFactor(obj : vec3<f32>) -> f32 {
-  if (o.params.z < 0.5) { return 1.0; }
-  let p = obj * o.params.w;
-  if (o.params.z < 1.5) {
+  if (m.params.z < 0.5) { return 1.0; }
+  let p = obj * m.params.w;
+  if (m.params.z < 1.5) {
     let q = floor(p);
     let ck = (q.x + q.y + q.z) - 2.0 * floor((q.x + q.y + q.z) * 0.5);
     return mix(0.4, 1.0, ck);
@@ -83,12 +77,17 @@ fn patternFactor(obj : vec3<f32>) -> f32 {
 
 @fragment
 fn fs(in : VsOut) -> @location(0) vec4<f32> {
-  let base = o.baseColor.rgb * patternFactor(in.obj);
+  // Sampled outside all control flow, as WGSL's uniformity analysis wants.
+  // The default binding is the renderer's 1x1 white, so an unmapped
+  // material multiplies by one.
+  let texel = textureSample(t_base_color, s_base_color, in.uv);
+  let base4 = m.baseColor * texel;
+  let base = base4.rgb * patternFactor(in.obj);
 
-  // Unlit: the (patterned) base colour exactly. First, so lines and 2D pay
-  // for nothing below.
-  if (o.emissive.w > 0.5) {
-    return vec4<f32>(pow(base, vec3<f32>(0.4545)), o.baseColor.a);
+  // Unlit: the (patterned, textured) base colour exactly. First, so lines
+  // of work below are never paid for by 2D.
+  if (m.emissive.w > 0.5) {
+    return offlerAlpha(vec4<f32>(pow(base, vec3<f32>(0.4545)), base4.a));
   }
 
   let N = normalize(in.nrm);
@@ -96,8 +95,8 @@ fn fs(in : VsOut) -> @location(0) vec4<f32> {
   let V = normalize(g.cam - in.world);
   let H = normalize(L + V);
 
-  let metallic = o.params.x;
-  let rough = clamp(o.params.y, 0.03, 1.0);
+  let metallic = m.params.x;
+  let rough = clamp(m.params.y, 0.03, 1.0);
 
   let diff = max(dot(N, L), 0.0);
   // Perceptual roughness to a Blinn-Phong exponent: matte 2, mirror ~1400.
@@ -109,7 +108,7 @@ fn fs(in : VsOut) -> @location(0) vec4<f32> {
 
   let colour = diffuse * (vec3<f32>(g.ambient) + diff * g.lightColor)
              + specTint * spec * g.lightColor
-             + o.emissive.rgb;
+             + m.emissive.rgb;
 
-  return vec4<f32>(pow(colour, vec3<f32>(0.4545)), o.baseColor.a);
+  return offlerAlpha(vec4<f32>(pow(colour, vec3<f32>(0.4545)), base4.a));
 }

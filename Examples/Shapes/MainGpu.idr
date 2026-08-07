@@ -7,7 +7,6 @@ module Examples.Shapes.MainGpu
 import Examples.Shapes.Scene
 import Offler.Gfx.Platform
 import Offler.Gfx.Renderer
-import Offler.Shaders
 import Offler.Web.Gpu
 import Offler.Web.Js
 import Offler.Web.Platform
@@ -24,7 +23,7 @@ main = do
     then showError "WebGPU is not available here. Switch to the WebGL2 build."
     else do
       p <- initWeb "gl"
-      initGpu "gl" wgslSrc $ \res =>
+      initGpu "gl" $ \res =>
         case res of
           Just gpu => run gpu p
           Nothing => showError "navigator.gpu exists but no adapter was available."

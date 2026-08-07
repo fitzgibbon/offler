@@ -7,13 +7,12 @@ import Offler.Gfx.Platform
 import Offler.Gfx.Renderer
 import Offler.Native.Platform
 import Offler.Native.Wgpu
-import Offler.Shaders
 
 %default covering
 
 main : IO ()
 main = do
-  Just r <- initWgpu "Flat2d" wgslSrc
+  Just r <- initWgpu "Flat2d"
     | Nothing => putStrLn "flat2d: could not open a window or start wgpu."
   p <- initNative "Flat2d" (ctxOf r)
   putStrLn "flat2d: Esc quits."

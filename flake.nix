@@ -26,6 +26,8 @@
               sdl3
               wgpu-native
               vulkan-loader
+              # Image decoding in the C shim (stb_image.h)
+              stb
               # Software Vulkan (lavapipe) and a headless X server, so the
               # native examples can be smoke-tested without a GPU or a display
               mesa
@@ -39,6 +41,7 @@
             # pkg-config when these are unset.
             WGPU_CFLAGS = "-I${wgpu.dev}/include";
             WGPU_LIBS = "-L${wgpu}/lib -lwgpu_native -Wl,-rpath,${wgpu}/lib";
+            STB_CFLAGS = "-I${pkgs.stb}/include/stb";
 
             shellHook = ''
               # wgpu dlopens libvulkan.so.1 at run time. Without the loader on

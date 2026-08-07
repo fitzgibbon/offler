@@ -25,7 +25,7 @@ import Offler.Transform
 record Body where
   constructor MkBody
   radius, rate, phase, incline, size : Double
-  mat : Material
+  mat : StandardMaterial
 
 ||| Deterministic pseudo-random in [0,1), so the swarm is stable from frame
 ||| to frame and for a given index as the count changes.
@@ -63,7 +63,7 @@ bodyModel t b =
       y = sin (a * 2.0) * b.radius * b.incline
    in translate x y z `mmul` scaleM b.size
 
-coreMat : Material
+coreMat : StandardMaterial
 coreMat = glowing (dim 2.2 (rgb 1.0 0.72 0.30))
 
 coreModel : Double -> Mat4
@@ -100,23 +100,25 @@ handle _ p w (KeyDown k) = do
 handle _ _ _ _ = pure ()
 
 frame : Renderer r f => Platform p =>
-        r -> p -> World -> MeshHandle -> MeshHandle -> FpsCounter
+        r -> p -> World -> MaterialId StandardMaterial
+      -> MeshHandle -> MeshHandle -> FpsCounter
       -> Double -> L IO ()
-frame r p w core body fps t = do
+frame r p w mid core body fps t = do
   liftIO (pollEvents p >>= traverse_ (handle r p w))
   Just fr <- beginFrame r camera lights t
     | Nothing => pure ()
-  fr1 <- draw r fr core (coreModel t) coreMat
+  fr1 <- draw r fr mid core (coreModel t) coreMat
   bodies <- liftIO (readIORef w.bodies)
   -- One bind for the whole crowd, not one per body: `drawMany` loops inside
   -- a single lifted IO action, so ten thousand bodies do not put ten
   -- thousand `Bind` frames on the JS engine's stack.
-  fr2 <- drawMany r fr1 body (map (\b => (bodyModel t b, b.mat)) bodies)
+  fr2 <- drawMany r fr1 mid body (map (\b => (bodyModel t b, b.mat)) bodies)
   endFrame r fr2
 
 export
 run : Renderer r f => Platform p => r -> p -> IO ()
 run r p = do
+  mid <- registerMaterial {m = StandardMaterial} r
   core <- loadMesh r (sphere 1.0 3)
   body <- loadMesh r (sphere 1.0 1)
   w <- MkWorld <$> newIORef 0 <*> newIORef []
@@ -124,4 +126,4 @@ run r p = do
   fps <- newFps
   setStatus p "backend" (rendererName r)
   setStatus p "note" "+/- to double/halve"
-  runLoop p (\t => LIO.run (frame r p w core body fps t) >> reportFps p fps t)
+  runLoop p (\t => LIO.run (frame r p w mid core body fps t) >> reportFps p fps t)

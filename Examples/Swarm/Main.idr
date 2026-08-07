@@ -7,13 +7,12 @@ import Offler.Gfx.Platform
 import Offler.Gfx.Renderer
 import Offler.Native.Platform
 import Offler.Native.Wgpu
-import Offler.Shaders
 
 %default covering
 
 main : IO ()
 main = do
-  Just r <- initWgpu "Swarm" wgslSrc
+  Just r <- initWgpu "Swarm"
     | Nothing => putStrLn "swarm: could not open a window or start wgpu."
   p <- initNative "Swarm" (ctxOf r)
   putStrLn "swarm: Esc quits."

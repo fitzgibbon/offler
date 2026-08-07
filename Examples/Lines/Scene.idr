@@ -30,10 +30,10 @@ camera t =
 lights : Lights
 lights = defaultLights
 
-lineMat : Material
-lineMat = unlit (srgba 0.62 0.72 0.95 0.45)
+lineColor : Color
+lineColor = srgba 0.62 0.72 0.95 0.45
 
-markerMat : Material
+markerMat : StandardMaterial
 markerMat = glowing (dim 2.5 (rgb 1.0 0.62 0.25))
 
 ||| The globe: every triangle edge of a subdivided icosahedron, spun about +y
@@ -74,8 +74,9 @@ handle r Resized = resize r
 handle _ _ = pure ()
 
 frame : Renderer r f => Platform p =>
-        r -> p -> MeshHandle -> FpsCounter -> Double -> L IO ()
-frame r p marker fps t = do
+        r -> p -> MaterialId StandardMaterial -> MeshHandle -> FpsCounter
+      -> Double -> L IO ()
+frame r p mid marker fps t = do
   liftIO $ do
     pollEvents p >>= traverse_ (handle r)
     -- Rebuilt on the CPU every frame and re-uploaded, *outside* the pass:
@@ -84,17 +85,18 @@ frame r p marker fps t = do
     loadLines r (overlay t)
   Just fr <- beginFrame r (camera t) lights t
     | Nothing => pure ()
-  fr1 <- draw r fr marker (markerModel t 0.0) markerMat
-  fr2 <- draw r fr1 marker (markerModel t 3.1) markerMat
+  fr1 <- draw r fr mid marker (markerModel t 0.0) markerMat
+  fr2 <- draw r fr1 mid marker (markerModel t 3.1) markerMat
   -- After the meshes, so the blend has something solid to sit over.
-  fr3 <- drawLines r fr2 lineMat
+  fr3 <- drawLines r fr2 lineColor
   endFrame r fr3
 
 export
 run : Renderer r f => Platform p => r -> p -> IO ()
 run r p = do
+  mid <- registerMaterial {m = StandardMaterial} r
   marker <- loadMesh r (sphere 1.0 2)
   fps <- newFps
   setStatus p "backend" (rendererName r)
   setStatus p "stats" (show (length (overlay 0.0)) ++ " segments/frame")
-  runLoop p (\t => LIO.run (frame r p marker fps t) >> reportFps p fps t)
+  runLoop p (\t => LIO.run (frame r p mid marker fps t) >> reportFps p fps t)

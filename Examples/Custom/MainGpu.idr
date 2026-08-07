@@ -1,10 +1,7 @@
-||| Entry point for the WebGPU bundle. Compiled separately from the WebGL2
-||| one, so neither bundle carries the other's backend. Device acquisition is
-||| asynchronous, which is why `run` is reached from inside a continuation
-||| here and directly in the WebGL2 build.
-module Examples.Lines.MainGpu
+||| Entry point for the WebGPU bundle.
+module Examples.Custom.MainGpu
 
-import Examples.Lines.Scene
+import Examples.Custom.Scene
 import Offler.Gfx.Platform
 import Offler.Gfx.Renderer
 import Offler.Web.Gpu

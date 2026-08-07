@@ -3,6 +3,7 @@
 ||| list built on the CPU; `uploadMesh` flattens it into the `Verts` a
 ||| renderer's `createMesh` takes.
 |||
+||| Every vertex carries a position, a normal and texture coordinates.
 ||| Winding is counter-clockwise seen from outside, which is what the
 ||| pipelines cull against.
 module Offler.Mesh
@@ -17,6 +18,7 @@ public export
 record Vertex where
   constructor MkVertex
   position, normal : V3
+  uv : V2
 
 public export
 Tri : Type
@@ -28,20 +30,21 @@ MeshData = List Tri
 
 ||| A quad from its centre and two half-edge vectors, normal `u x v`
 ||| (normalised), corners `c ± u ± v` wound counter-clockwise from the
-||| normal's side.
+||| normal's side, with `u` and `v` spanning the texture square.
 quadFace : (center, u, v : V3) -> List Tri
 quadFace c u v =
   let n = normalize3 (cross3 u v)
-      a = MkVertex (sub3 (sub3 c u) v) n
-      b = MkVertex (sub3 (add3 c u) v) n
-      d = MkVertex (add3 (add3 c u) v) n
-      e = MkVertex (add3 (sub3 c u) v) n
+      a = MkVertex (sub3 (sub3 c u) v) n (MkV2 0.0 1.0)
+      b = MkVertex (sub3 (add3 c u) v) n (MkV2 1.0 1.0)
+      d = MkVertex (add3 (add3 c u) v) n (MkV2 1.0 0.0)
+      e = MkVertex (add3 (sub3 c u) v) n (MkV2 0.0 0.0)
    in [(a, b, d), (a, d, e)]
 
 --------------------------------------------------------------------------------
 -- 3D primitives
 
 ||| An axis-aligned box of the given full extents, centred at the origin.
+||| Each face maps the whole texture.
 public export
 cuboid : (width, height, depth : Double) -> MeshData
 cuboid w h d =
@@ -67,6 +70,15 @@ plane w d = quadFace zero3 (MkV3 0.0 0.0 (d * 0.5)) (MkV3 (w * 0.5) 0.0 0.0)
 public export
 rectangle : (width, height : Double) -> MeshData
 rectangle w h = quadFace zero3 (MkV3 (w * 0.5) 0.0 0.0) (MkV3 0.0 (h * 0.5) 0.0)
+
+||| Texture coordinates for a point on the unit sphere: the spherical
+||| projection, `u` around the equator and `v` pole to pole. An icosphere
+||| triangle whose vertices straddle the seam smears -- the classic ico
+||| seam, which bevy's icosphere shares.
+sphereUV : V3 -> V2
+sphereUV p =
+  MkV2 (0.5 + atan2 p.vz p.vx / tau)
+       (0.5 - asin (max (-1.0) (min 1.0 p.vy)) / pi)
 
 ||| The twenty faces of a regular icosahedron on the unit sphere, from three
 ||| golden rectangles. Every vertex doubles as its own normal.
@@ -109,17 +121,19 @@ unitSphere Z = icosahedron
 unitSphere (S k) = subdivide (unitSphere k)
 
 ||| An icosphere: `subdivisions` 0 is 20 triangles, each level quadruples.
-||| 3 (1280 triangles) reads as smooth at ordinary sizes.
+||| 3 (1280 triangles) reads as smooth at ordinary sizes. UVs are the
+||| spherical projection, with the usual ico seam.
 public export
 sphere : (radius : Double) -> (subdivisions : Nat) -> MeshData
 sphere r n =
   map (\(a, b, c) => (vert a, vert b, vert c)) (unitSphere n)
   where
     vert : V3 -> Vertex
-    vert p = MkVertex (scale3 r p) p
+    vert p = MkVertex (scale3 r p) p (sphereUV p)
 
 ||| A torus around +y: `ringRadius` from the centre to the middle of the
-||| tube, `tubeRadius` of the tube itself.
+||| tube, `tubeRadius` of the tube itself. The texture wraps once around
+||| each way.
 public export
 torus : (ringRadius, tubeRadius : Double) -> (ringSegments, tubeSegments : Int) -> MeshData
 torus rr tr ringSegments tubeSegments =
@@ -130,6 +144,7 @@ torus rr tr ringSegments tubeSegments =
       vert = \u, v => let n = MkV3 (cos u * cos v) (sin v) (sin u * cos v)
                           c = MkV3 (rr * cos u) 0.0 (rr * sin u)
                        in MkVertex (add3 c (scale3 tr n)) n
+                                   (MkV2 (u / tau) (v / tau))
    in concatMap (\i => concatMap (\j =>
         let u = cast i * du
             u' = cast (i + 1) * du
@@ -143,7 +158,8 @@ torus rr tr ringSegments tubeSegments =
         (range 0 (nv - 1)))
         (range 0 (nu - 1))
 
-||| A cylinder around +y, centred at the origin, with caps.
+||| A cylinder around +y, centred at the origin, with caps. The side wraps
+||| the texture once around; the caps map it radially.
 public export
 cylinder : (radius, height : Double) -> (segments : Int) -> MeshData
 cylinder r h segments =
@@ -154,22 +170,24 @@ cylinder r h segments =
                        u' = cast (i + 1) * du
                        na = MkV3 (cos u) 0.0 (sin u)
                        nb = MkV3 (cos u') 0.0 (sin u')
-                       a = MkVertex (MkV3 (r * cos u) (-hy) (r * sin u)) na
-                       b = MkVertex (MkV3 (r * cos u) hy (r * sin u)) na
-                       c = MkVertex (MkV3 (r * cos u') hy (r * sin u')) nb
-                       d = MkVertex (MkV3 (r * cos u') (-hy) (r * sin u')) nb
+                       a = MkVertex (MkV3 (r * cos u) (-hy) (r * sin u)) na (MkV2 (u / tau) 1.0)
+                       b = MkVertex (MkV3 (r * cos u) hy (r * sin u)) na (MkV2 (u / tau) 0.0)
+                       c = MkVertex (MkV3 (r * cos u') hy (r * sin u')) nb (MkV2 (u' / tau) 0.0)
+                       d = MkVertex (MkV3 (r * cos u') (-hy) (r * sin u')) nb (MkV2 (u' / tau) 1.0)
                     in [(a, b, c), (a, c, d)]
       up = MkV3 0.0 1.0 0.0
       down = MkV3 0.0 (-1.0) 0.0
+      capUV = \uu => MkV2 (0.5 + 0.5 * cos uu) (0.5 + 0.5 * sin uu)
       caps = \i => let u = cast i * du
                        u' = cast (i + 1) * du
                        pt = \uu, yy => MkV3 (r * cos uu) yy (r * sin uu)
-                    in [ ( MkVertex (MkV3 0.0 hy 0.0) up
-                         , MkVertex (pt u' hy) up
-                         , MkVertex (pt u hy) up )
-                       , ( MkVertex (MkV3 0.0 (-hy) 0.0) down
-                         , MkVertex (pt u (-hy)) down
-                         , MkVertex (pt u' (-hy)) down ) ]
+                       centreUV = MkV2 0.5 0.5
+                    in [ ( MkVertex (MkV3 0.0 hy 0.0) up centreUV
+                         , MkVertex (pt u' hy) up (capUV u')
+                         , MkVertex (pt u hy) up (capUV u) )
+                       , ( MkVertex (MkV3 0.0 (-hy) 0.0) down centreUV
+                         , MkVertex (pt u (-hy)) down (capUV u)
+                         , MkVertex (pt u' (-hy)) down (capUV u') ) ]
    in concatMap (\i => side i ++ caps i) (range 0 (n - 1))
 
 ||| A cone around +y: base at -height/2, apex at +height/2, with a base cap.
@@ -179,22 +197,22 @@ cone r h segments =
   let n = max 3 segments
       du = tau / cast n
       hy = h * 0.5
-      len = sqrt (h * h + r * r)
       slant = \u => normalize3 (MkV3 (cos u * h) r (sin u * h))
       apex = MkV3 0.0 hy 0.0
       base = \u => MkV3 (r * cos u) (-hy) (r * sin u)
       down = MkV3 0.0 (-1.0) 0.0
+      capUV = \uu => MkV2 (0.5 + 0.5 * cos uu) (0.5 + 0.5 * sin uu)
       face = \i => let u = cast i * du
                        u' = cast (i + 1) * du
-                    in [ ( MkVertex apex (slant ((u + u') * 0.5))
-                         , MkVertex (base u') (slant u')
-                         , MkVertex (base u) (slant u) )
-                       , ( MkVertex (MkV3 0.0 (-hy) 0.0) down
-                         , MkVertex (base u) down
-                         , MkVertex (base u') down ) ]
+                    in [ ( MkVertex apex (slant ((u + u') * 0.5)) (MkV2 ((u + u') * 0.5 / tau) 0.0)
+                         , MkVertex (base u') (slant u') (MkV2 (u' / tau) 1.0)
+                         , MkVertex (base u) (slant u) (MkV2 (u / tau) 1.0) )
+                       , ( MkVertex (MkV3 0.0 (-hy) 0.0) down (MkV2 0.5 0.5)
+                         , MkVertex (base u) down (capUV u)
+                         , MkVertex (base u') down (capUV u') ) ]
    in concatMap face (range 0 (n - 1))
 
-||| A filled circle in the XY plane facing +z.
+||| A filled circle in the XY plane facing +z, texture mapped radially.
 public export
 circle : (radius : Double) -> (segments : Int) -> MeshData
 circle r segments =
@@ -202,20 +220,22 @@ circle r segments =
       du = tau / cast n
       fwd = MkV3 0.0 0.0 1.0
       pt = \u => MkV3 (r * cos u) (r * sin u) 0.0
+      uvAt = \u => MkV2 (0.5 + 0.5 * cos u) (0.5 - 0.5 * sin u)
       face = \i => let u = cast i * du
                        u' = cast (i + 1) * du
-                    in ( MkVertex zero3 fwd
-                       , MkVertex (pt u) fwd
-                       , MkVertex (pt u') fwd )
+                    in ( MkVertex zero3 fwd (MkV2 0.5 0.5)
+                       , MkVertex (pt u) fwd (uvAt u)
+                       , MkVertex (pt u') fwd (uvAt u') )
    in map face (range 0 (n - 1))
 
 --------------------------------------------------------------------------------
 -- Upload
 
 ||| Flatten a triangle list into the buffer a renderer's `createMesh` takes:
-||| position and normal, six floats a vertex, eighteen a triangle. One bounds
-||| test per triangle rather than per component: the offsets inside a triangle
-||| are literals, so they are proofs.
+||| position, normal and uv, eight floats a vertex, twenty-four a triangle
+||| written as six `poke4`s. One bounds test per triangle rather than per
+||| component: the offsets inside a triangle are literals, so they are
+||| proofs.
 export
 uploadMesh : MeshData -> IO (VertBuf Offler.Gfx.Layout.meshFloats)
 uploadMesh mesh = do
@@ -223,22 +243,22 @@ uploadMesh mesh = do
   go buf.arr 0 mesh
   pure buf
   where
-    vert : F32Array cap -> At cap 6 -> Vertex -> IO ()
-    vert arr o (MkVertex p n) = do
-      poke arr (sub 0 o) p.vx; poke arr (sub 1 o) p.vy; poke arr (sub 2 o) p.vz
-      poke arr (sub 3 o) n.vx; poke arr (sub 4 o) n.vy; poke arr (sub 5 o) n.vz
+    vert : F32Array cap -> At cap 8 -> Vertex -> IO ()
+    vert arr o (MkVertex p n t) = do
+      poke4 arr (sub 0 o) p.vx p.vy p.vz n.vx
+      poke4 arr (sub 4 o) n.vy n.vz t.vx t.vy
 
-    tri : F32Array cap -> At cap 18 -> Tri -> IO ()
+    tri : F32Array cap -> At cap 24 -> Tri -> IO ()
     tri arr o (a, b, c) = do
       vert arr (sub 0 o) a
-      vert arr (sub 6 o) b
-      vert arr (sub 12 o) c
+      vert arr (sub 8 o) b
+      vert arr (sub 16 o) c
 
     go : F32Array cap -> Int -> MeshData -> IO ()
     go arr _ [] = pure ()
-    go arr i (t :: rest) = case window {w = 18} arr i of
+    go arr i (t :: rest) = case window {w = 24} arr i of
       Nothing => pure ()   -- would overrun: stop rather than write past the end
-      Just o => tri arr o t >> go arr (i + 18) rest
+      Just o => tri arr o t >> go arr (i + 24) rest
 
 --------------------------------------------------------------------------------
 -- Lines

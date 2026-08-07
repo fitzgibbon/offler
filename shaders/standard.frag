@@ -1,16 +1,14 @@
 #version 300 es
+// The standard material's fragment stage. The std140 blocks, the
+// t_base_color sampler and the offlerAlpha helper are generated and spliced
+// in after the version line. Mat's members, flat in scope: baseColor,
+// emissive (rgb + unlit flag), params (metallic, roughness, pattern,
+// patternScale).
 precision highp float;
-in vec3 vObj;
 in vec3 vNormal;
 in vec3 vWorld;
-uniform vec3 uCam;
-uniform float uTime;
-uniform vec3 uLightDir;
-uniform float uAmbient;
-uniform vec3 uLightColor;
-uniform vec4 uBaseColor;
-uniform vec4 uEmissive;   // rgb, w = shading mode
-uniform vec4 uParams;     // metallic, roughness, pattern, patternScale
+in vec3 vObj;
+in vec2 vUv;
 out vec4 outColour;
 
 float hash(vec3 p) {
@@ -42,9 +40,9 @@ float fbm(vec3 p) {
 // Procedural modulation of the base colour, over object space so it sticks
 // to the surface. 0 plain, 1 checker, 2 value-noise fbm.
 float patternFactor() {
-  if (uParams.z < 0.5) return 1.0;
-  vec3 p = vObj * uParams.w;
-  if (uParams.z < 1.5) {
+  if (params.z < 0.5) return 1.0;
+  vec3 p = vObj * params.w;
+  if (params.z < 1.5) {
     vec3 q = floor(p);
     return mix(0.4, 1.0, mod(q.x + q.y + q.z, 2.0));
   }
@@ -52,22 +50,25 @@ float patternFactor() {
 }
 
 void main() {
-  vec3 base = uBaseColor.rgb * patternFactor();
+  // The default binding is the renderer's 1x1 white, so an unmapped
+  // material multiplies by one.
+  vec4 texel = texture(t_base_color, vUv);
+  vec4 base4 = baseColor * texel;
+  vec3 base = base4.rgb * patternFactor();
 
-  // Unlit: the (patterned) base colour exactly. First, so lines and 2D pay
-  // for nothing below.
-  if (uEmissive.w > 0.5) {
-    outColour = vec4(pow(base, vec3(0.4545)), uBaseColor.a);
+  // Unlit: the (patterned, textured) base colour exactly.
+  if (emissive.w > 0.5) {
+    outColour = offlerAlpha(vec4(pow(base, vec3(0.4545)), base4.a));
     return;
   }
 
   vec3 N = normalize(vNormal);
-  vec3 L = normalize(-uLightDir);
-  vec3 V = normalize(uCam - vWorld);
+  vec3 L = normalize(-lightDir);
+  vec3 V = normalize(cam - vWorld);
   vec3 H = normalize(L + V);
 
-  float metallic = uParams.x;
-  float rough = clamp(uParams.y, 0.03, 1.0);
+  float metallic = params.x;
+  float rough = clamp(params.y, 0.03, 1.0);
 
   float diff = max(dot(N, L), 0.0);
   // Perceptual roughness to a Blinn-Phong exponent: matte 2, mirror ~1400.
@@ -77,9 +78,9 @@ void main() {
   vec3 specTint = mix(vec3(1.0), base, metallic);
   vec3 diffuse = base * (1.0 - 0.9 * metallic);
 
-  vec3 colour = diffuse * (vec3(uAmbient) + diff * uLightColor)
-              + specTint * spec * uLightColor
-              + uEmissive.rgb;
+  vec3 colour = diffuse * (vec3(ambient) + diff * lightColor)
+              + specTint * spec * lightColor
+              + emissive.rgb;
 
-  outColour = vec4(pow(colour, vec3(0.4545)), uBaseColor.a);
+  outColour = offlerAlpha(vec4(pow(colour, vec3(0.4545)), base4.a));
 }

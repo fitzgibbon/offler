@@ -7,13 +7,12 @@ import Offler.Gfx.Platform
 import Offler.Gfx.Renderer
 import Offler.Native.Platform
 import Offler.Native.Wgpu
-import Offler.Shaders
 
 %default covering
 
 main : IO ()
 main = do
-  Just r <- initWgpu "Lines" wgslSrc
+  Just r <- initWgpu "Lines"
     | Nothing => putStrLn "lines: could not open a window or start wgpu."
   p <- initNative "Lines" (ctxOf r)
   putStrLn "lines: Esc quits."

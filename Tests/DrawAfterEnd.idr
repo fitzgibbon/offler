@@ -9,10 +9,11 @@ import Offler.Light
 import Offler.Material
 import Offler.Math
 
-bad : Renderer r f => r -> Camera -> Lights -> MeshHandle -> L IO ()
-bad rr cam ls mesh = do
+bad : Renderer r f => r -> Camera -> Lights
+   -> MaterialId StandardMaterial -> MeshHandle -> L IO ()
+bad rr cam ls mid mesh = do
   Just fr <- beginFrame rr cam ls 0.0
     | Nothing => pure ()
   _   <- endFrame rr fr
-  fr2 <- draw rr fr mesh identity (lit white)
+  fr2 <- draw rr fr mid mesh identity (lit white)
   endFrame rr fr2

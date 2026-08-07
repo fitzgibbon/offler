@@ -1,12 +1,13 @@
-||| The two uniform scratch buffers, and the only things allowed to write into
+||| The uniform scratch buffers, and the only things allowed to write into
 ||| them.
 |||
-||| `Offler.Gfx.Layout` says where each field goes; this says who may put one
-||| there. The WebGPU-flavoured backends would otherwise each repeat the same
-||| pokes per object and per frame, each with its own copy of the offsets and
-||| its own `i >= maxObjects` test at the top. Multiple copies of a bounds
-||| check are multiple chances to omit one -- and omitting one writes into the
-||| next object's slot, which shows up as a wrong colour rather than an error.
+||| `Offler.Gfx.Layout` says where each engine field goes; this says who may
+||| put one there. Three buffers cross to the GPU each frame: the globals,
+||| the per-draw engine blocks (model matrix and alpha lane), and the
+||| per-draw material blocks, written through the `MatWriter` a material's
+||| `writeMat` receives. The object and material buffers share slot indices:
+||| draw `i` reads slot `i` of both, picked out by the same pair of dynamic
+||| offsets.
 module Offler.Gfx.Uniform
 
 import Offler.Camera
@@ -15,7 +16,6 @@ import Offler.Gfx.Array
 import Offler.Gfx.Config
 import Offler.Gfx.Layout
 import Offler.Light
-import Offler.Material
 import Offler.Math
 
 %default total
@@ -30,9 +30,11 @@ export
 newGlobalScratch : IO GlobalScratch
 newGlobalScratch = newF32 globalFloats
 
-||| One slot per object, filled during the frame and uploaded in a single
-||| write at the end. Writing per object means one queue call per draw, which
-||| is what made the orrery's WebGPU path far slower than WebGL2 at scale.
+||| One slot per draw, filled during the frame and uploaded in a single
+||| write at the end. Writing per draw means one queue call each, which is
+||| what made the orrery's WebGPU path far slower than WebGL2 at scale. The
+||| same type serves the object buffer and the material buffer: both are
+||| `maxObjects` slots of `objStride` bytes.
 public export
 objScratchFloats : Int
 objScratchFloats = objFloats * maxObjects
@@ -45,116 +47,148 @@ export
 newObjScratch : IO ObjScratch
 newObjScratch = newF32 objScratchFloats
 
-||| An object's place in the uniform buffer: a window that has been checked.
+||| A draw's place in the uniform buffers: a window that has been checked.
 |||
-||| `MkSlot` is private and every draw takes a `Slot` rather than an `Int`, so
-||| the check cannot be skipped, cannot be written differently in two
+||| `MkSlot` is private and every draw takes a `Slot` rather than an `Int`,
+||| so the check cannot be skipped, cannot be written differently in two
 ||| backends, and cannot be made against the wrong bound.
-|||
-||| One constructor and one field, so the newtype optimisation leaves nothing
-||| of it at run time. The index and the byte offset are recovered from the
-||| offset rather than stored beside it, which would be a second allocation
-||| per object per frame.
 export
 data Slot : Type where
   MkSlot : At Offler.Gfx.Uniform.objScratchFloats Offler.Gfx.Layout.objFloats -> Slot
 
-||| One test, covering both uses of the index. The scratch holds exactly
-||| `objFloats * maxObjects` floats and the uniform buffer exactly
-||| `objStride * maxObjects` bytes, and `objFloats * 4 = objStride` is proved
-||| in `Offler.Gfx.Layout` -- so a window that fits the scratch is a dynamic
-||| offset the bind group will also accept, and there is no second bound to
-||| check.
-|||
-||| `Nothing` means the frame has run out of slots. The caller must decide
-||| what that means; it can no longer be forgotten.
+||| One test, covering every use of the index. The scratches hold exactly
+||| `objFloats * maxObjects` floats and the uniform buffers exactly
+||| `objStride * maxObjects` bytes, and `objFloats * 4 = objStride` is
+||| proved in `Offler.Gfx.Layout` -- so a window that fits the scratch is a
+||| dynamic offset the bind group will also accept.
 export
 slot : ObjScratch -> (i : Int) -> Maybe Slot
 slot a i = case window {w = objFloats} a (i * objFloats) of
              Just o => Just (MkSlot o)
              Nothing => Nothing
 
-||| The slot number. The C shim scales it by `objStride` itself, which is why
-||| it wants this rather than the byte offset.
+||| The slot number. The C shim scales it by `objStride` itself, which is
+||| why it wants this rather than the byte offset.
 export %inline
 slotIndex : Slot -> Int
 slotIndex (MkSlot o) = atOffset o `div` objFloats
 
 ||| The dynamic bind-group offset, in bytes. `index * objStride` and
 ||| `atOffset * 4` are the same number because `objFloats * 4 = objStride`,
-||| which `Offler.Gfx.Layout.objFloatsOk` proves -- so this needs no division.
+||| which `Offler.Gfx.Layout.objFloatsOk` proves -- so this needs no
+||| division.
 export %inline
 slotOffset : Slot -> Int
 slotOffset (MkSlot o) = atOffset o * 4
 
-||| Write one object's uniform record. The offsets inside the record are the
-||| layout's business and this is the only thing that knows them.
+||| Write a draw's engine block: the model matrix and the four lane floats
+||| (alpha mode and cutoff for material draws; an RGBA colour for the line
+||| pipeline, which reuses the block). The offsets are the layout's business
+||| and this is the only thing that knows them.
 export
-pokeObject : ObjScratch -> Slot -> Mat4 -> Material -> IO ()
-pokeObject a (MkSlot o) model mat = do
+pokeObject : ObjScratch -> Slot -> Mat4
+          -> (laneX, laneY, laneZ, laneW : Double) -> IO ()
+pokeObject a (MkSlot o) model x y z w = do
   pokeMat a (sub 0 o) model
-  poke4 a (sub objBaseColorFloat o)
-        mat.baseColor.red mat.baseColor.green mat.baseColor.blue mat.baseColor.alpha
-  poke4 a (sub objEmissiveFloat o)
-        mat.emissive.red mat.emissive.green mat.emissive.blue (modeCode mat)
-  poke4 a (sub objParamsFloat o) mat.metallic mat.roughness
-        (patternCode mat.pattern) (patternScale mat.pattern)
+  poke4 a (sub objLaneFloat o) x y z w
 
-||| A slot asserted rather than tested, private to this module: what the
-||| batch loop below steps with once its bound is dealt with. `slot` remains
-||| the only way in from outside.
-slotAt : Int -> Slot
-slotAt i = MkSlot (unsafeAt (i * objFloats))
+--------------------------------------------------------------------------------
+-- The material writer
 
-||| The batched form of `pokeObject`: fill consecutive slots from `first`,
-||| returning the next free index. This is the per-object hot path, so the
-||| §8.1 lesson from the orrery's notes applies -- the measured cost of the
-||| checked constructor was the `Maybe` it allocates, not the comparison --
-||| and the loop therefore tests a bare `i < maxObjects` per object instead
-||| of allocating a `Just` per object. The test still exists exactly once,
-||| inside the module that owns the bound; what moved is its result from a
-||| heap value to a branch.
+||| Where a material's `writeMat` may write: its own 256-byte slot of the
+||| material buffer, addressed in 16-byte *lanes* -- lane `k` is bytes
+||| `16k .. 16k+15` of the block, matching the uniform layout's alignment,
+||| so `matFields` like `[baseColor Vec4, params Vec4]` sit at lanes 0 and 1.
 |||
-||| `boundsMode` is a compile-time constant from the generated
-||| `Offler.Gfx.Config`, so the branch between the two loops is decided
-||| before either runs: `make BOUNDS=trusted` removes even the comparison.
-||| Trusted is only sane when the application bounds its own draw count --
-||| past the end, the JS backend silently drops the writes and the C side
-||| corrupts the heap.
+||| The constructor is private: a writer exists only for the slot a backend
+||| is currently filling, so a material cannot write anywhere else. Each put
+||| is one bare comparison against the slot's sixteen lanes -- no `Maybe`,
+||| per the §8.1 measurement -- and an out-of-range lane is dropped.
+export
+data MatWriter : Type where
+  MkMatWriter : ObjScratch -> (base : Int) -> MatWriter
+
+||| For backends only: the writer for a slot of the material scratch.
+export
+matWriter : ObjScratch -> Slot -> MatWriter
+matWriter a (MkSlot o) = MkMatWriter a (atOffset o)
+
+||| Sixteen 4-float lanes per 256-byte slot.
+lanesPerSlot : Int
+lanesPerSlot = 16
+
+export
+putVec4 : MatWriter -> (lane : Int) -> (x, y, z, w : Double) -> IO ()
+putVec4 (MkMatWriter a base) lane x y z w =
+  when (lane >= 0 && lane < lanesPerSlot) $
+    poke4 a (unsafeAt (base + lane * 4)) x y z w
+
+export
+putColor : MatWriter -> (lane : Int) -> Color -> IO ()
+putColor w lane c = putVec4 w lane c.red c.green c.blue c.alpha
+
+export
+putMat4 : MatWriter -> (lane : Int) -> Mat4 -> IO ()
+putMat4 (MkMatWriter a base) lane mat =
+  when (lane >= 0 && lane + 3 < lanesPerSlot) $
+    pokeMat a (unsafeAt (base + lane * 4)) mat
+
+||| One float, at component `c` (0..3) of a lane.
+export
+putF : MatWriter -> (lane : Int) -> (c : Int) -> Double -> IO ()
+putF (MkMatWriter a base) lane c v =
+  when (lane >= 0 && lane < lanesPerSlot && c >= 0 && c <= 3) $
+    poke a (unsafeAt (base + lane * 4 + c)) v
+
+--------------------------------------------------------------------------------
+-- Batch filling
+
 -- Written in `PrimIO` with the world bound on the left-hand side,
 -- deliberately: with the world inside an `IO` do-block the JS backend
 -- compiled the recursion as a call returning a world-lambda that was then
 -- applied -- not a self tail call, so no `__tailRec`, and the stack
 -- overflowed V8 at exactly `maxObjects`. With the world as an ordinary
--- argument the recursive call is saturated and the trampoline fires. Found
--- the way §8d.7 of the orrery's notes says such things are found: a node
--- program that runs the loop at the cap, and a grep of the generated
--- output. Neither problem nor fix is visible in this source.
-goChecked : ObjScratch -> Int -> List (Mat4, Material) -> PrimIO Int
-goChecked a i [] w = MkIORes i w
-goChecked a i ((m, mt) :: rest) w =
+-- argument the recursive call is saturated and the trampoline fires.
+-- `Checks/StackCheck.idr` holds this property in place.
+goChecked : (x -> Slot -> IO ()) -> ObjScratch -> Int -> List x -> PrimIO Int
+goChecked k a i [] w = MkIORes i w
+goChecked k a i (v :: rest) w =
   if i >= maxObjects
     then MkIORes i w
-    else case toPrim (pokeObject a (slotAt i) m mt) w of
-           MkIORes _ w' => goChecked a (i + 1) rest w'
+    else case toPrim (k v (MkSlot (unsafeAt (i * objFloats)))) w of
+           MkIORes _ w' => goChecked k a (i + 1) rest w'
 
-goTrusted : ObjScratch -> Int -> List (Mat4, Material) -> PrimIO Int
-goTrusted a i [] w = MkIORes i w
-goTrusted a i ((m, mt) :: rest) w =
-  case toPrim (pokeObject a (slotAt i) m mt) w of
-    MkIORes _ w' => goTrusted a (i + 1) rest w'
+goTrusted : (x -> Slot -> IO ()) -> ObjScratch -> Int -> List x -> PrimIO Int
+goTrusted k a i [] w = MkIORes i w
+goTrusted k a i (v :: rest) w =
+  case toPrim (k v (MkSlot (unsafeAt (i * objFloats)))) w of
+    MkIORes _ w' => goTrusted k a (i + 1) rest w'
 
+||| Run a writer over consecutive slots from `first`, returning the next
+||| free index: the per-draw hot path of every batched draw. The per-item
+||| bound is a bare `i < maxObjects` comparison rather than a `Maybe` per
+||| item -- the §8.1 measurement found the allocation, not the comparison,
+||| was the cost -- and the test exists exactly once, here, inside the
+||| module that owns the invariant. `boundsMode` is a compile-time constant
+||| from the generated `Offler.Gfx.Config`, so the branch between the two
+||| loops is decided before either runs: `make BOUNDS=trusted` removes even
+||| the comparison, and is only sane when the application bounds its own
+||| draw count.
 export
-pokeObjects : ObjScratch -> (first : Int) -> List (Mat4, Material) -> IO Int
-pokeObjects a first batch =
+fillWith : ObjScratch -> (first : Int) -> List x -> (x -> Slot -> IO ()) -> IO Int
+fillWith a first batch k =
   case boundsMode of
-    Checked => fromPrim (goChecked a (max 0 first) batch)
-    Trusted => fromPrim (goTrusted a (max 0 first) batch)
+    Checked => fromPrim (goChecked k a (max 0 first) batch)
+    Trusted => fromPrim (goTrusted k a (max 0 first) batch)
 
-||| Write the frame globals. Also where the clip-space correction is applied,
-||| which both WebGPU-flavoured backends need and neither should have to
-||| remember. (WebGL2 does not use this scratch at all: it sets classic
-||| uniforms one by one, in [-1,1] clip space.)
+--------------------------------------------------------------------------------
+-- Globals
+
+||| Write the frame globals. All three backends share this block byte for
+||| byte -- std140 and WGSL lay these field types out identically -- and
+||| differ only in `correctClip`: the WebGPU-flavoured backends pass `True`
+||| to rewrite the projection's z row into [0,1] clip space, WebGL2 passes
+||| `False` because GL wants [-1,1].
 |||
 ||| Every offset here is a literal against a known capacity, so all the
 ||| bounds are discharged at compile time and the last `poke4`, at 40, is
@@ -162,10 +196,10 @@ pokeObjects a first batch =
 ||| compiling rather than running off the end of the buffer.
 export
 pokeGlobals : GlobalScratch -> Camera -> (aspectRatio : Double) -> Lights
-            -> (time : Double) -> IO ()
-pokeGlobals a cam aspectRatio lights t = do
+            -> (time : Double) -> (correctClip : Bool) -> IO ()
+pokeGlobals a cam aspectRatio lights t correct = do
   pokeMat a (here 0) (projMatrix cam.projection aspectRatio)
-  correctClipZ a (here 0)
+  when correct (correctClipZ a (here 0))
   pokeMat a (here 16) (viewMatrix cam)
   let eye = eyeOf cam
       dir = normalize3 lights.direction

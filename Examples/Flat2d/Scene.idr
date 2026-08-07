@@ -53,7 +53,7 @@ record Sprite where
   constructor MkSprite
   shape : Int          -- 0 circle, 1 square, 2 tall rectangle
   size, x0, y0, vx, vy, spin : Double
-  mat : Material
+  mat : StandardMaterial
 
 mkSprite : Int -> Sprite
 mkSprite i =
@@ -85,32 +85,35 @@ handle : Renderer r f => r -> Event -> IO ()
 handle r Resized = resize r
 handle _ _ = pure ()
 
-drawSprites : Renderer r f => r -> (1 frame : f) -> Double
+drawSprites : Renderer r f => r -> (1 frame : f)
+           -> MaterialId StandardMaterial -> Double
            -> (circle : MeshHandle) -> (square : MeshHandle) -> (tall : MeshHandle)
            -> List Sprite -> L1 IO f
-drawSprites r fr _ _ _ _ [] = pure1 fr
-drawSprites r fr t circle square tall (s :: rest) = do
+drawSprites r fr _ _ _ _ _ [] = pure1 fr
+drawSprites r fr mid t circle square tall (s :: rest) = do
   let m = if s.shape == 0 then circle else if s.shape == 1 then square else tall
-  fr' <- draw r fr m (spriteModel t s) s.mat
-  drawSprites r fr' t circle square tall rest
+  fr' <- draw r fr mid m (spriteModel t s) s.mat
+  drawSprites r fr' mid t circle square tall rest
 
 frame : Renderer r f => Platform p =>
-        r -> p -> MeshHandle -> MeshHandle -> MeshHandle -> FpsCounter
+        r -> p -> MaterialId StandardMaterial
+      -> MeshHandle -> MeshHandle -> MeshHandle -> FpsCounter
       -> Double -> L IO ()
-frame r p circleM squareM tallM fps t = do
+frame r p mid circleM squareM tallM fps t = do
   liftIO (pollEvents p >>= traverse_ (handle r))
   Just fr <- beginFrame r camera lights t
     | Nothing => pure ()
-  fr1 <- drawSprites r fr t circleM squareM tallM sprites
+  fr1 <- drawSprites r fr mid t circleM squareM tallM sprites
   endFrame r fr1
 
 export
 run : Renderer r f => Platform p => r -> p -> IO ()
 run r p = do
+  mid <- registerMaterial {m = StandardMaterial} r
   circleM <- loadMesh r (circle 0.5 48)
   squareM <- loadMesh r (rectangle 1.0 1.0)
   tallM <- loadMesh r (rectangle 0.55 1.6)
   fps <- newFps
   setStatus p "backend" (rendererName r)
   setStatus p "stats" (show (length sprites) ++ " sprites, orthographic")
-  runLoop p (\t => LIO.run (frame r p circleM squareM tallM fps t) >> reportFps p fps t)
+  runLoop p (\t => LIO.run (frame r p mid circleM squareM tallM fps t) >> reportFps p fps t)

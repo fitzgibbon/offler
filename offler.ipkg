@@ -11,6 +11,7 @@ modules = Offler.Camera
         , Offler.Gfx.Array
         , Offler.Gfx.Config
         , Offler.Gfx.Layout
+        , Offler.Gfx.Material
         , Offler.Gfx.Platform
         , Offler.Gfx.Renderer
         , Offler.Gfx.Uniform
