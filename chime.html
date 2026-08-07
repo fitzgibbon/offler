@@ -55,7 +55,7 @@
 <body>
 <header>
   <h1><a href="index.html">offler</a> / Chime <span>&mdash; Idris 2 compiled to JavaScript</span></h1>
-  <p>Fourteen bars, one synthesised pluck &mdash; pitched a pentatonic step per bar, panned to where it sits. Click or tap a bar (touches are first-class events, not fake clicks), steer the highlight with the arrows or a gamepad stick, strike with <code>Space</code> or the pad's South button, ride the master gain on the wheel. <code>l</code> locks the pointer and steers by raw deltas. The sound is Web Audio here and an SDL3 mixer in the native build, behind one interface.</p>
+  <p>Fourteen bars, one synthesised pluck &mdash; pitched a pentatonic step per bar, panned to where it sits. The bars are <em>ray-picked</em>: hovering walks the highlight and a click strikes whatever the ray through the pixel actually hits, at any window shape. Touches are first-class events, not fake clicks; steer with the arrows or a gamepad stick, strike with <code>Space</code> or the pad's South button, ride the master gain on the wheel. <code>l</code> locks the pointer and steers by raw deltas. The sound is Web Audio here and an SDL3 mixer in the native build, behind one interface.</p>
 </header>
 
 <canvas id="gl"></canvas>

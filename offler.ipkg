@@ -22,6 +22,7 @@ modules = Offler.Audio
         , Offler.Material
         , Offler.Math
         , Offler.Mesh
+        , Offler.Picking
         , Offler.Scene
         , Offler.Native.Audio
         , Offler.Native.Platform

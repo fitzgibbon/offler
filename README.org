@@ -53,7 +53,7 @@ navigating with =?r=webgpu=.
 | =Swarm=    | =swarm.html=  | *one instanced draw* for the whole crowd: 50 000 bodies (to 200 000 with =+=) stream their model matrix and hue at instance rate against a single material asset — =drawInstanced=, gated by =InstOk= at compile time |
 | =Custom=   | =custom.html= | a user-defined material, end to end: a scanline hologram implementing the =Material= interface with its own WGSL and GLSL, =Blend=-composited through =Mask= cutout panels, all as scene-graph nodes over assets |
 | =Flat2d=   | =flat2d.html= | the 2D mode: forty sprite nodes under an orthographic camera, unlit assets, a frame is forty =setTransform=s |
-| =Chime=    | =chime.html=  | the input and audio systems meeting: fourteen bars struck by click, touch, keys, gamepad South or under pointer lock; one *procedural* pluck (=SoundPcm=, no asset files) pitched by =semitones= per bar and panned to the bar; wheel rides =setMasterGain=; ripples are immediate gizmos |
+| =Chime=    | =chime.html=  | input, audio and picking meeting: fourteen bars *ray-picked* under the pointer (hover walks the highlight, =PickDown= strikes — no screen-space bar arithmetic), struck by click, touch, keys, gamepad South or under pointer lock; one *procedural* pluck (=SoundPcm=, no asset files) pitched by =semitones= per bar and panned to the bar; wheel rides =setMasterGain=; ripples are immediate gizmos |
 
 All six are verified rendering natively under Xvfb + lavapipe
 (=scripts/headless-shot.sh=), and in the browser on *both* backends: WebGL2
@@ -85,6 +85,7 @@ desktop adds.
 | =Offler.Gfx.Renderer=   | the =Renderer= interface with its linear frame token; =MeshHandle t=, =Drawable= |
 | =Offler.Scene=          | the retained scene graph: bevy_transform + bevy_hierarchy without the ECS |
 | =Offler.Gizmos=         | both gizmo modes over pure =GizmoData=: the immediate overlay and retained gizmo assets |
+| =Offler.Picking=        | which thing is under the pointer: =pickRay= unprojection, bounds + ray tests, and the hover/press/click state machine — pure over =Camera=, the scene graph and the =Event= stream |
 | =Offler.Gfx.Platform=   | the =Platform= interface and the input =Event= vocabulary: keys, pointer (absolute + relative + lock), touch, wheel, polled =Gamepad= state |
 | =Offler.Audio=          | the =Audio= interface: retained sounds (=SoundPcm= / =SoundFile=), generational =Voice= handles, =Playback= (gain, pan, rate, =semitones=, loop) |
 | =Offler.Web.Js=         | browser primitives: opaque handles, DOM, rAF, input listeners       |
@@ -214,6 +215,7 @@ by mechanism:
 | =bevy_gizmos= (immediate)             | =Offler.Gizmos=: =gLine=/=gArrow=/=gAxes=/=gCircle=/=gSphere=/=gCuboid=/=gGrid= over pure =GizmoData=; =drawGizmoData= + =drawGizmos= render the frame's worth, per-vertex coloured, in one blended call |
 | =GizmoAsset= + =Gizmo= (retained, 0.14) | =gizmoAsset=: freeze =GizmoData= into a =Lines= mesh drawn by =GizmoMaterial= (an ordinary =Material= whose =vs_line= keeps the per-vertex colours; the tint is the =Gizmo= config), spawn the =Drawable= as a scene node, move it by transform. =retainGizmos= gives the bare mesh for a custom material's =vs_line= |
 | =bevy_input= (keyboard, mouse, touch, gamepad) | the =Platform= half of input: one =Event= stream for keys/pointer/touch (SDL names translated to the browser's spelling, fingers never faked as clicks) and =gamepads= polled into one =Gamepad= record — bevy's =Axis=/=ButtonInput= resources are its ECS spelling of the same snapshot |
+| =bevy_picking= (pointers → backends → focus) | =Offler.Picking=, the same three layers: mice and fingers unify into =PointerId=; the backend is =pickRay= (the *analytic* inverse of the camera the renderer draws with, so pixels map to world rays exactly at every aspect — no screen-space approximations) cast against declared bounds, =sceneTargets= reading world matrices from the graph where bevy's raycast reads =Mesh= assets; the focus layer is =pickStep=, a *pure* state machine emitting =PickOver=/=PickOut=/=PickDown=/=PickUp=/=PickClick= where bevy dispatches observer events. GPU id-buffer picking, bevy's optional backend, would need render-to-texture and stays out |
 | =bevy_audio= (=AudioPlayer=, =PlaybackSettings=) | the =Audio= interface: =loadSound= retains (URL decode async, handle valid at once — the texture bargain), =play= with =Playback= (gain/pan/rate/=semitones=/loop) mints a generational =Voice= where bevy spawns an entity; =SoundPcm= is the procedural path bevy routes through =AudioSource= assets |
 
 Where bevy derives the GPU-facing description with a proc macro, offler

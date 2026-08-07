@@ -21,6 +21,7 @@ import Offler.Light
 import Offler.Material
 import Offler.Math
 import Offler.Mesh
+import Offler.Picking
 import Offler.Transform
 
 %hide Control.Linear.LIO.fromInteger
@@ -125,11 +126,6 @@ handle : Renderer r f => Platform p => Audio au =>
       -> Event -> IO ()
 handle r p au snd w status t = go
   where
-    barAt : Double -> IO Int
-    barAt px = do
-      (sw, _) <- surfaceSize p
-      pure (cast (px / max 1.0 sw * cast barCount))
-
     moveCursor : Double -> IO ()
     moveCursor d = modifyIORef w.cursor
       (clampD 0.0 (cast barCount - 1.0) . (+ d))
@@ -140,13 +136,13 @@ handle r p au snd w status t = go
       pure (cast c)
 
     go : Event -> IO ()
-    -- Locked, the pointer has no position (the browser pins it wherever
-    -- the lock began), so a press strikes the highlighted bar -- the
-    -- South-button mapping -- rather than a stale coordinate.
-    go (PointerDown LeftButton px _) = do
-      locked <- readIORef w.locked
-      strike au snd w t !(if locked then cursorBar else barAt px)
-    go (TouchStart _ px _) = strike au snd w t !(barAt px)
+    -- Unlocked presses and touches arrive through the picker, which ray-
+    -- casts the actual bars. Locked, the pointer has no position, so a
+    -- press strikes the highlighted bar -- the South-button mapping.
+    go (PointerDown LeftButton _ _) = do
+      True <- readIORef w.locked
+        | False => pure ()
+      strike au snd w t !cursorBar
     go (PointerDelta dx _) = do
       True <- readIORef w.locked
         | False => pure ()
@@ -218,20 +214,40 @@ barModel : Double -> List (Int, Double) -> Int -> Mat4
 barModel t rs i =
   translate (barX i) 0.0 0.0 `mmul` scaleM (0.48 * pulseFor t rs i)
 
+||| Hovering a bar walks the highlight there; a press (mouse or finger,
+||| unified into `PointerId` by the picker) strikes what the ray actually
+||| hit -- no screen-space bar arithmetic anywhere.
+onPick : Audio au => au -> SoundHandle -> World -> Double
+      -> PickEvent Int -> IO ()
+onPick au snd w t (PickOver _ i _) = writeIORef w.cursor (cast i)
+onPick au snd w t (PickDown _ LeftButton i _) = strike au snd w t i
+onPick _ _ _ _ _ = pure ()
+
 frame : Renderer r f => Platform p => Audio au =>
-        r -> p -> au -> World
+        r -> p -> au -> World -> Picker Int
      -> List (Int, Drawable) -> MeshHandle Triangles -> Handle StandardMaterial
      -> SoundHandle -> Status -> Double -> L IO ()
-frame r p au w bars ball markH snd status t = do
+frame r p au w picker bars ball markH snd status t = do
   cur <- liftIO $ do
     last <- readIORef w.lastT
     writeIORef w.lastT t
     let dt = clampD 0.0 0.1 (t - last)
-    pollEvents p >>= traverse_ (handle r p au snd w status t)
+    evs <- pollEvents p
+    traverse_ (handle r p au snd w status t) evs
     pollPads p au snd w t dt
     modifyIORef w.ripples (filter (\(_, t0) => t - t0 < 1.2))
     rs <- readIORef w.ripples
-    drawGizmoData r (rippleGizmos t rs)
+    -- The bars as pick targets: a unit-sphere bound under exactly the
+    -- matrix each bar draws with this frame.
+    let targets = map (\(i, _) => target i (barModel t rs i)
+                                    (BoundSphere zero3 1.0)) bars
+    locked <- readIORef w.locked
+    sfc <- surfaceSize p
+    -- Locked, the pointer has no position: the picker sees no events and
+    -- its hover state simply persists.
+    picks <- pickEvents picker camera sfc targets (if locked then [] else evs)
+    traverse_ (onPick au snd w t) picks
+    drawGizmoData r (rippleGizmos t !(readIORef w.ripples))
     readIORef w.cursor
   rs <- liftIO (readIORef w.ripples)
   Just fr <- beginFrame r camera lights t
@@ -258,7 +274,8 @@ run r p au status = do
   markH <- addMaterial r mid (glowing (dim 1.7 (rgb 1.0 0.85 0.4)))
   snd <- loadSound au (SoundPcm plinkRate plink)
   w <- newWorld
+  picker <- newPicker
   status "backend" (rendererName r)
   status "count-label" "gain 1.0"
   status "note" "click/tap a bar; arrows + Space; l locks the pointer"
-  runLoop p $ \t => LIO.run (frame r p au w bars ball markH snd status t)
+  runLoop p $ \t => LIO.run (frame r p au w picker bars ball markH snd status t)

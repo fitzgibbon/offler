@@ -106,6 +106,24 @@ despawn s (MkNodeId i) = do
         Nothing => modifyIORef s.roots (filter (/= i))
         Just p => modifyIORef s.nodes (adjust p ({ children $= filter (/= i) }))
 
+||| One node's world matrix -- its `GlobalTransform`, the product up the
+||| parent chain. What `collect` computes for every node, exposed singly
+||| so consumers outside the draw path (picking, attachment points) read
+||| the same answer the renderer draws with. `Nothing` for a despawned
+||| node.
+export
+worldOf : Scene -> NodeId -> IO (Maybe Mat4)
+worldOf s (MkNodeId i) = do
+  ns <- readIORef s.nodes
+  pure (go ns i)
+  where
+    go : SortedMap Int Node -> Int -> Maybe Mat4
+    go ns j = do
+      n <- lookup j ns
+      case n.parent of
+        Nothing => Just (matOf n.transform)
+        Just p => map (`mmul` matOf n.transform) (go ns p)
+
 ||| The propagation pass: flatten the tree into draw order, each node's
 ||| world matrix the product of its ancestors' -- `GlobalTransform`,
 ||| computed rather than cached.
