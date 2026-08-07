@@ -51,4 +51,9 @@ Platform WebPlatform where
     writeIORef p.queue []
     pure (reverse es)
 
-  setStatus _ slot s = setText slot s
+||| The example pages' status line: a DOM element by id. Deliberately not a
+||| `Platform` member -- it is page chrome, not a windowing concept -- so
+||| scenes take it as a plain function from their `main`.
+export
+webStatus : (slot : String) -> String -> IO ()
+webStatus = setText

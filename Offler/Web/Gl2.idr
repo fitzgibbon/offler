@@ -2,12 +2,15 @@
 |||
 ||| Modelled on the WebGPU backends rather than classic GL: uniforms live in
 ||| std140 buffer blocks -- which lay out identically to WGSL's uniform
-||| address space for offler's field types -- so the same scratch buffers and
-||| the same 256-byte slots serve here byte for byte, selected per draw with
-||| `bindBufferRange`, GL's spelling of a dynamic offset. Draws are recorded
-||| and replayed at `endFrame` after one prefix upload of each slot buffer,
-||| the same submit discipline as the other backends. Programs are per
-||| material type; `Blend` draws replay depth-sorted, after everything else.
+||| address space for offler's field types -- so the same scratch buffers
+||| and the same 256-byte slots serve here byte for byte, selected per draw
+||| with `bindBufferRange`, GL's spelling of a dynamic offset. Material
+||| assets own a slot of the material buffer, uploaded once when made;
+||| programs are per material type, triangle and (when declared) line
+||| variants. Draws are recorded and replayed at `endFrame` after one
+||| prefix upload of the object buffer -- per-draw `bufferSubData` was
+||| measured at a quarter of the frame rate at ten thousand bodies --
+||| opaque in call order, then gizmos, then `Blend` depth-sorted.
 module Offler.Web.Gl2
 
 import Data.IORef
@@ -36,40 +39,50 @@ prim__context : JSVal -> PrimIO JSVal
 
 ||| The mutable JS runtime: buffers, tables, the frame's recorded draws, and
 ||| the replay executors with their binding caches -- defined once here
-||| because each `%foreign` lambda is otherwise its own world. GL executes
-||| immediately, so draws are *recorded* and replayed at `endFrame` after a
-||| single prefix upload of each slot buffer, exactly as the WebGPU-flavoured
-||| backends submit: per-draw `bufferSubData` was measured at a quarter of
-||| the frame rate at ten thousand bodies. Buffer sizes and strides arrive
-||| as arguments from the layout.
-%foreign "javascript:lambda:(gl,meshSpec,meshStride,gSize,objSize,stride,maxN)=>{const rt={gl:gl,meshes:[],texs:[],mats:[],all:[],lineBuf:null,lineCount:0,lineProg:null,objArr:null,matArr:null,curProg:null,curMesh:null,curTex:null};gl.enable(gl.DEPTH_TEST);gl.enable(gl.CULL_FACE);const mkbuf=(n)=>{const b=gl.createBuffer();gl.bindBuffer(gl.UNIFORM_BUFFER,b);gl.bufferData(gl.UNIFORM_BUFFER,n,gl.DYNAMIC_DRAW);return b};rt.gbuf=mkbuf(gSize);rt.obuf=mkbuf(stride*maxN);rt.mbuf=mkbuf(stride*maxN);gl.bindBufferBase(gl.UNIFORM_BUFFER,0,rt.gbuf);rt.white=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,rt.white);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA8,1,1,0,gl.RGBA,gl.UNSIGNED_BYTE,new Uint8Array([255,255,255,255]));const attrs=meshSpec.split(';').map(e=>e.split(',').map(Number));rt.bindMesh=(mm)=>{gl.bindBuffer(gl.ARRAY_BUFFER,mm.b);for(const a of attrs){gl.enableVertexAttribArray(a[0]);gl.vertexAttribPointer(a[0],a[2],gl.FLOAT,false,meshStride,a[1])}};rt.execDraw=(d)=>{const M=rt.mats[d.mat];const mm=rt.meshes[d.mesh];const off=d.slot*stride;if(rt.curProg!==M.prog){gl.useProgram(M.prog);rt.curProg=M.prog}gl.bindBufferRange(gl.UNIFORM_BUFFER,1,rt.obuf,off,objSize);gl.bindBufferRange(gl.UNIFORM_BUFFER,2,rt.mbuf,off,M.matSize);const tk=d.mat+':'+d.t0+','+d.t1+','+d.t2+','+d.t3;if(rt.curTex!==tk){const ts=[d.t0,d.t1,d.t2,d.t3];for(let i=0;i<M.texCount;i++){gl.activeTexture(gl.TEXTURE0+i);gl.bindTexture(gl.TEXTURE_2D,ts[i]>=0&&rt.texs[ts[i]]?rt.texs[ts[i]]:rt.white)}rt.curTex=tk}if(rt.curMesh!==mm){rt.bindMesh(mm);rt.curMesh=mm}gl.drawArrays(gl.TRIANGLES,0,mm.n)};rt.execLine=(d)=>{if(!rt.lineBuf||rt.lineCount<=0)return;gl.useProgram(rt.lineProg);rt.curProg=null;const off=d.slot*stride;gl.bindBufferRange(gl.UNIFORM_BUFFER,1,rt.obuf,off,objSize);gl.bindBuffer(gl.ARRAY_BUFFER,rt.lineBuf);gl.enableVertexAttribArray(0);gl.vertexAttribPointer(0,3,gl.FLOAT,false,16,0);gl.disableVertexAttribArray(1);gl.disableVertexAttribArray(2);rt.curMesh=null;gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.depthMask(false);gl.drawArrays(gl.LINES,0,rt.lineCount);gl.depthMask(true);gl.disable(gl.BLEND)};return rt}"
-prim__initRt : JSVal -> String -> Int -> Int -> Int -> Int -> Int -> PrimIO JSVal
+||| because each `%foreign` lambda is otherwise its own world. Buffer sizes
+||| and strides arrive as arguments from the layout.
+%foreign "javascript:lambda:(gl,meshSpec,meshStride,lineSpec,lineStride,gSize,objSize,stride,maxN)=>{const rt={gl:gl,meshes:[],texs:[],mats:[],assets:[],all:[],lineBuf:null,lineCount:0,lineProg:null,objArr:null,matArr:null,curProg:null,curMesh:null,curTex:null};gl.enable(gl.DEPTH_TEST);gl.enable(gl.CULL_FACE);const mkbuf=(n)=>{const b=gl.createBuffer();gl.bindBuffer(gl.UNIFORM_BUFFER,b);gl.bufferData(gl.UNIFORM_BUFFER,n,gl.DYNAMIC_DRAW);return b};rt.gbuf=mkbuf(gSize);rt.obuf=mkbuf(stride*maxN);rt.mbuf=mkbuf(stride*maxN);gl.bindBufferBase(gl.UNIFORM_BUFFER,0,rt.gbuf);rt.white=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,rt.white);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA8,1,1,0,gl.RGBA,gl.UNSIGNED_BYTE,new Uint8Array([255,255,255,255]));const meshAttrs=meshSpec.split(';').map(e=>e.split(',').map(Number));const lineAttrs=lineSpec.split(';').map(e=>e.split(',').map(Number));rt.bindMesh=(mm)=>{gl.bindBuffer(gl.ARRAY_BUFFER,mm.b);const attrs=mm.topo===1?lineAttrs:meshAttrs;const stridev=mm.topo===1?lineStride:meshStride;for(const a of attrs){gl.enableVertexAttribArray(a[0]);gl.vertexAttribPointer(a[0],a[2],gl.FLOAT,false,stridev,a[1])}if(mm.topo!==1){}else{gl.disableVertexAttribArray(1);gl.disableVertexAttribArray(2)}if(mm.ib)gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,mm.ib)};rt.execDraw=(d)=>{const A=rt.assets[d.a];const M=rt.mats[A.mat];const mm=rt.meshes[d.m];const prog=mm.topo===1?M.lineProg:M.prog;if(!prog)return;const off=d.s*stride;if(rt.curProg!==prog){gl.useProgram(prog);rt.curProg=prog}gl.bindBufferRange(gl.UNIFORM_BUFFER,1,rt.obuf,off,objSize);gl.bindBufferRange(gl.UNIFORM_BUFFER,2,rt.mbuf,A.slot*stride,M.matSize);const tk=A.mat+':'+A.t0+','+A.t1+','+A.t2+','+A.t3;if(rt.curTex!==tk){const ts=[A.t0,A.t1,A.t2,A.t3];for(let i=0;i<M.texCount;i++){gl.activeTexture(gl.TEXTURE0+i);gl.bindTexture(gl.TEXTURE_2D,ts[i]>=0&&rt.texs[ts[i]]?rt.texs[ts[i]]:rt.white)}rt.curTex=tk}if(rt.curMesh!==mm){rt.bindMesh(mm);rt.curMesh=mm}if(mm.ib)gl.drawElements(mm.topo===1?gl.LINES:gl.TRIANGLES,mm.icount,gl.UNSIGNED_INT,0);else gl.drawArrays(mm.topo===1?gl.LINES:gl.TRIANGLES,0,mm.n)};rt.execLine=(d)=>{if(!rt.lineBuf||rt.lineCount<=0)return;gl.useProgram(rt.lineProg);rt.curProg=null;const off=d.s*stride;gl.bindBufferRange(gl.UNIFORM_BUFFER,1,rt.obuf,off,objSize);gl.bindBuffer(gl.ARRAY_BUFFER,rt.lineBuf);gl.enableVertexAttribArray(0);gl.vertexAttribPointer(0,3,gl.FLOAT,false,16,0);gl.disableVertexAttribArray(1);gl.disableVertexAttribArray(2);rt.curMesh=null;gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.depthMask(false);gl.drawArrays(gl.LINES,0,rt.lineCount);gl.depthMask(true);gl.disable(gl.BLEND)};return rt}"
+prim__initRt : JSVal -> String -> Int -> String -> Int -> Int -> Int -> Int -> Int -> PrimIO JSVal
 
-||| The scratch arrays, attached once they exist so `execDraw` can read
-||| slots from them at replay time as well as immediately.
+||| The scratch arrays, attached once they exist so replay can read slots.
 %foreign "javascript:lambda:(rt,o,m)=>{rt.objArr=o;rt.matArr=m;return 0}"
 prim__attach : JSVal -> AnyPtr -> AnyPtr -> PrimIO Int
 
-||| Compile and link a material's program, wire its uniform blocks to the
-||| fixed binding points by name (a block a shader never reads is optimised
-||| out; skip it), and point its samplers at consecutive texture units.
-||| Throws with the driver's log if compilation fails, which the page's
-||| error box then shows.
-%foreign "javascript:lambda:(rt,vs,fs,texNames,matSize)=>{const gl=rt.gl;const mk=(t,s)=>{const o=gl.createShader(t);gl.shaderSource(o,s);gl.compileShader(o);if(!gl.getShaderParameter(o,gl.COMPILE_STATUS))throw new Error(gl.getShaderInfoLog(o));return o};const p=gl.createProgram();gl.attachShader(p,mk(gl.VERTEX_SHADER,vs));gl.attachShader(p,mk(gl.FRAGMENT_SHADER,fs));gl.linkProgram(p);if(!gl.getProgramParameter(p,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(p));gl.useProgram(p);['Globals','Obj','Mat'].forEach((n,i)=>{const bi=gl.getUniformBlockIndex(p,n);if(bi!==0xFFFFFFFF)gl.uniformBlockBinding(p,bi,i)});const names=texNames?texNames.split(';'):[];names.forEach((n,i)=>{const l=gl.getUniformLocation(p,'t_'+n);if(l)gl.uniform1i(l,i)});return rt.mats.push({prog:p,texCount:names.length,matSize:matSize})-1}"
-prim__register : JSVal -> String -> String -> String -> Int -> PrimIO Int
+||| Compile and link a material's program(s), wire the uniform blocks to
+||| the fixed binding points by name (a block a shader never reads is
+||| optimised out; skip it), and point samplers at consecutive texture
+||| units. The line program exists only when the material declares its
+||| line stage. Throws with the driver's log if compilation fails, which
+||| the page's error box then shows.
+%foreign "javascript:lambda:(rt,vs,fs,lvs,hasLine,texNames,matSize)=>{const gl=rt.gl;const mk=(t,s)=>{const o=gl.createShader(t);gl.shaderSource(o,s);gl.compileShader(o);if(!gl.getShaderParameter(o,gl.COMPILE_STATUS))throw new Error(gl.getShaderInfoLog(o));return o};const link=(vsrc)=>{const p=gl.createProgram();gl.attachShader(p,mk(gl.VERTEX_SHADER,vsrc));gl.attachShader(p,mk(gl.FRAGMENT_SHADER,fs));gl.linkProgram(p);if(!gl.getProgramParameter(p,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(p));gl.useProgram(p);['Globals','Obj','Mat'].forEach((n,i)=>{const bi=gl.getUniformBlockIndex(p,n);if(bi!==0xFFFFFFFF)gl.uniformBlockBinding(p,bi,i)});const names=texNames?texNames.split(';'):[];names.forEach((n,i)=>{const l=gl.getUniformLocation(p,'t_'+n);if(l)gl.uniform1i(l,i)});return p};const names=texNames?texNames.split(';'):[];return rt.mats.push({prog:link(vs),lineProg:hasLine?link(lvs):null,texCount:names.length,matSize:matSize})-1}"
+prim__register : JSVal -> String -> String -> String -> Int -> String -> Int -> PrimIO Int
 
-||| The engine's line program, against the same blocks.
+%foreign "javascript:lambda:(rt,mat,slot,t0,t1,t2,t3)=>rt.assets.push({mat:mat,slot:slot,t0:t0,t1:t1,t2:t2,t3:t3})-1"
+prim__addAsset : JSVal -> Int -> Int -> Int -> Int -> Int -> Int -> PrimIO Int
+
+%foreign "javascript:lambda:(rt,ai,t0,t1,t2,t3)=>{const A=rt.assets[ai];A.t0=t0;A.t1=t1;A.t2=t2;A.t3=t3;rt.curTex=null;return 0}"
+prim__updateAsset : JSVal -> Int -> Int -> Int -> Int -> Int -> PrimIO Int
+
+||| Upload one asset's 256-byte slot from the material scratch: once per
+||| add or update, never per draw.
+%foreign "javascript:lambda:(rt,slot)=>{const gl=rt.gl;gl.bindBuffer(gl.UNIFORM_BUFFER,rt.mbuf);gl.bufferSubData(gl.UNIFORM_BUFFER,slot*256,rt.matArr,slot*64,64);return 0}"
+prim__uploadMatSlot : JSVal -> Int -> PrimIO Int
+
+||| The engine's gizmo line program, against the same blocks.
 %foreign "javascript:lambda:(rt,vs,fs)=>{const gl=rt.gl;const mk=(t,s)=>{const o=gl.createShader(t);gl.shaderSource(o,s);gl.compileShader(o);if(!gl.getShaderParameter(o,gl.COMPILE_STATUS))throw new Error(gl.getShaderInfoLog(o));return o};const p=gl.createProgram();gl.attachShader(p,mk(gl.VERTEX_SHADER,vs));gl.attachShader(p,mk(gl.FRAGMENT_SHADER,fs));gl.linkProgram(p);if(!gl.getProgramParameter(p,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(p));gl.useProgram(p);['Globals','Obj'].forEach((n,i)=>{const bi=gl.getUniformBlockIndex(p,n);if(bi!==0xFFFFFFFF)gl.uniformBlockBinding(p,bi,i)});rt.lineProg=p;return 0}"
 prim__lineInit : JSVal -> String -> String -> PrimIO Int
 
-||| Decode an image URL (or data: URL) into an sRGB texture, linear
-||| filtering, repeat wrap. Asynchronous: the continuation gets the table
-||| index, or -1.
-%foreign "javascript:lambda:(rt,url,k)=>{const gl=rt.gl;const img=new Image();img.onload=()=>{try{const t=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,t);gl.texImage2D(gl.TEXTURE_2D,0,gl.SRGB8_ALPHA8,gl.RGBA,gl.UNSIGNED_BYTE,img);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.REPEAT);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.REPEAT);k(rt.texs.push(t)-1)()}catch(e){k(-1)()}};img.onerror=()=>{k(-1)()};img.src=url;return 0}"
-prim__loadTexture : JSVal -> String -> (Int -> PrimIO Int) -> PrimIO Int
+||| Reserve a texture id *now*; the decode fills the table entry whenever
+||| it lands (bindings are looked up per draw here, so late textures are
+||| picked up with no extra machinery). sRGB, linear filtering, repeat.
+%foreign "javascript:lambda:(rt,url)=>{const gl=rt.gl;const id=rt.texs.push(null)-1;const img=new Image();img.onload=()=>{try{const t=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,t);gl.texImage2D(gl.TEXTURE_2D,0,gl.SRGB8_ALPHA8,gl.RGBA,gl.UNSIGNED_BYTE,img);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.REPEAT);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.REPEAT);rt.texs[id]=t;rt.curTex=null}catch(e){console.warn('offler: texture decode failed',e)}};img.onerror=()=>{console.warn('offler: texture load failed: '+url.slice(0,64))};img.src=url;return id}"
+prim__loadTexture : JSVal -> String -> PrimIO Int
 
-%foreign "javascript:lambda:(rt,a,n)=>{const gl=rt.gl;const b=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,b);gl.bufferData(gl.ARRAY_BUFFER,a,gl.STATIC_DRAW);return rt.meshes.push({b:b,n:n})-1}"
-prim__createMesh : JSVal -> AnyPtr -> Int -> PrimIO Int
+%foreign "javascript:lambda:(rt,a,n,topo)=>{const gl=rt.gl;const b=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,b);gl.bufferData(gl.ARRAY_BUFFER,a,gl.STATIC_DRAW);return rt.meshes.push({b:b,n:n,topo:topo,ib:null,icount:0})-1}"
+prim__createMesh : JSVal -> AnyPtr -> Int -> Int -> PrimIO Int
+
+%foreign "javascript:lambda:(rt,a,n,idx,icount)=>{const gl=rt.gl;const b=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,b);gl.bufferData(gl.ARRAY_BUFFER,a,gl.STATIC_DRAW);const ib=gl.createBuffer();gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,ib);gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,idx,gl.STATIC_DRAW);return rt.meshes.push({b:b,n:n,topo:0,ib:ib,icount:icount})-1}"
+prim__createMeshIndexed : JSVal -> AnyPtr -> Int -> AnyPtr -> Int -> PrimIO Int
 
 %foreign "javascript:lambda:(rt,a,n)=>{const gl=rt.gl;if(!rt.lineBuf)rt.lineBuf=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,rt.lineBuf);gl.bufferData(gl.ARRAY_BUFFER,a,gl.STATIC_DRAW);rt.lineCount=n;return 0}"
 prim__setLines : JSVal -> AnyPtr -> Int -> PrimIO Int
@@ -86,23 +99,21 @@ prim__viewport : JSVal -> PrimIO Int
 prim__begin : JSVal -> AnyPtr -> Int -> Double -> Double -> Double -> PrimIO Int
 
 ||| One draw, recorded: kind 0 opaque/masked, 2 blended.
-%foreign "javascript:lambda:(rt,mat,mesh,slot,t0,t1,t2,t3,blend,depth)=>{rt.all.push({k:blend?2:0,mat:mat,mesh:mesh,slot:slot,t0:t0,t1:t1,t2:t2,t3:t3,depth:depth});return 0}"
-prim__draw : JSVal -> Int -> Int -> Int -> Int -> Int -> Int -> Int -> Int -> Double -> PrimIO Int
+%foreign "javascript:lambda:(rt,asset,mesh,slot,blend,depth)=>{rt.all.push({k:blend?2:0,a:asset,m:mesh,s:slot,d:depth});return 0}"
+prim__draw : JSVal -> Int -> Int -> Int -> Int -> Double -> PrimIO Int
 
 ||| The batched form: one foreign call records `count` consecutive slots.
-%foreign "javascript:lambda:(rt,mat,mesh,first,count,t0,t1,t2,t3,blend,depth)=>{for(let i=0;i<count;i++)rt.all.push({k:blend?2:0,mat:mat,mesh:mesh,slot:first+i,t0:t0,t1:t1,t2:t2,t3:t3,depth:depth});return 0}"
-prim__drawSlices : JSVal -> Int -> Int -> Int -> Int -> Int -> Int -> Int -> Int -> Int -> Double -> PrimIO Int
+%foreign "javascript:lambda:(rt,asset,mesh,first,count,blend,depth)=>{for(let i=0;i<count;i++)rt.all.push({k:blend?2:0,a:asset,m:mesh,s:first+i,d:depth});return 0}"
+prim__drawSlices : JSVal -> Int -> Int -> Int -> Int -> Int -> Double -> PrimIO Int
 
-||| A line-overlay draw, recorded (kind 1). Blended and depth-read-only at
-||| replay; `lineWidth` is clamped to 1 by every shipping WebGL2
-||| implementation, which is the width wanted here anyway.
-%foreign "javascript:lambda:(rt,slot)=>{rt.all.push({k:1,slot:slot});return 0}"
+||| A gizmo overlay draw, recorded (kind 1).
+%foreign "javascript:lambda:(rt,slot)=>{rt.all.push({k:1,s:slot});return 0}"
 prim__drawLines : JSVal -> Int -> PrimIO Int
 
-||| The frame's replay: upload the filled prefix of both slot buffers once,
-||| then the opaque phase in call order, the line overlays, and the
+||| The frame's replay: upload the filled prefix of the object buffer once,
+||| then the opaque phase in call order, the gizmo overlays, and the
 ||| transparent phase back to front, blended and depth-read-only.
-%foreign "javascript:lambda:(rt,count,stride)=>{const gl=rt.gl;const fl=count*(stride>>2);if(count>0){gl.bindBuffer(gl.UNIFORM_BUFFER,rt.obuf);gl.bufferSubData(gl.UNIFORM_BUFFER,0,rt.objArr,0,fl);gl.bindBuffer(gl.UNIFORM_BUFFER,rt.mbuf);gl.bufferSubData(gl.UNIFORM_BUFFER,0,rt.matArr,0,fl)}rt.curProg=null;rt.curMesh=null;rt.curTex=null;for(const d of rt.all)if(d.k===0)rt.execDraw(d);for(const d of rt.all)if(d.k===1)rt.execLine(d);const bl=rt.all.filter(d=>d.k===2);if(bl.length){bl.sort((a,b)=>b.depth-a.depth);gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.depthMask(false);for(const d of bl)rt.execDraw(d);gl.depthMask(true);gl.disable(gl.BLEND)}rt.all.length=0;return 0}"
+%foreign "javascript:lambda:(rt,count,stride)=>{const gl=rt.gl;const fl=count*(stride>>2);if(count>0){gl.bindBuffer(gl.UNIFORM_BUFFER,rt.obuf);gl.bufferSubData(gl.UNIFORM_BUFFER,0,rt.objArr,0,fl)}rt.curProg=null;rt.curMesh=null;rt.curTex=null;for(const d of rt.all)if(d.k===0)rt.execDraw(d);for(const d of rt.all)if(d.k===1)rt.execLine(d);const bl=rt.all.filter(d=>d.k===2);if(bl.length){bl.sort((a,b)=>b.d-a.d);gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.depthMask(false);for(const d of bl)rt.execDraw(d);gl.depthMask(true);gl.disable(gl.BLEND)}rt.all.length=0;return 0}"
 prim__flush : JSVal -> Int -> Int -> PrimIO Int
 
 public export
@@ -113,18 +124,21 @@ record Gl2 where
   objScratch, matScratch : ObjScratch
   ||| Eye and forward at `beginFrame`, for sorting the transparent phase.
   eyeFwd : IORef (V3, V3)
+  ||| Material assets minted so far: the next free slot of the material
+  ||| buffer.
+  assetCount : IORef Int
   lineCount : IORef Int
 
 ||| Build a WebGL2 renderer over the given canvas. Synchronous, unlike
-||| WebGPU; materials arrive later, through `registerMaterial`.
+||| WebGPU; materials arrive later, through `registerMaterial`/`addMaterial`.
 export
 initGl2 : (canvasId : String) -> IO Gl2
 initGl2 canvasId = do
   canvas <- byId canvasId
   ignore (syncSize canvas)
   gl <- primIO (prim__context canvas)
-  rt <- primIO (prim__initRt gl meshVertexSpec meshStride globalSize objSize
-                             objStride maxObjects)
+  rt <- primIO (prim__initRt gl meshVertexSpec meshStride lineVertexSpec lineStride
+                             globalSize objSize objStride maxObjects)
   ignore (primIO (prim__viewport gl))
   ignore (primIO (prim__lineInit rt (glslLineVert lineVertSrc)
                                  (glslLineFrag lineFragSrc)))
@@ -133,11 +147,11 @@ initGl2 canvasId = do
   ms <- newObjScratch
   ignore (primIO (prim__attach rt (raw os) (raw ms)))
   ef <- newIORef (zero3, MkV3 0.0 0.0 (-1.0))
-  MkGl2 gl canvas rt gs os ms ef <$> newIORef 0
+  MkGl2 gl canvas rt gs os ms ef <$> newIORef 0 <*> newIORef 0
 
 ||| WebGL2 keeps no pass object, so the token is pure capability plus the
-||| slot counter: it exists to be threaded, and its constructor never leaves
-||| this module.
+||| slot counter: it exists to be threaded, and its constructor never
+||| leaves this module.
 export
 data Gl2Frame : Type where
   MkGl2Frame : (nextSlot : Int) -> Gl2Frame
@@ -148,24 +162,54 @@ depthOf r model = do
   (eye, fwd) <- readIORef r.eyeFwd
   pure (dot3 fwd (sub3 (MkV3 model.m12 model.m13 model.m14) eye))
 
+||| Write a material value into an asset slot and upload it.
+fillAsset : Material m => Gl2 -> (slotIdx : Int) -> m -> IO ()
+fillAsset r i v =
+  case slot r.matScratch i of
+    Nothing => pure ()
+    Just s => do
+      writeMat (matWriter r.matScratch s) v
+      ignore (primIO (prim__uploadMatSlot r.rt (slotIndex s)))
+
 export
 Renderer Gl2 Gl2Frame where
   rendererName _ = "WebGL2"
 
-  createMesh r vs =
-    meshHandle <$> primIO (prim__createMesh r.rt (vertsRaw vs) (vertsCount vs))
+  createMesh {t} r vs =
+    meshHandle <$> primIO (prim__createMesh r.rt (vertsRaw vs) (vertsCount vs)
+                                            (topoCode t))
 
-  loadTexture r src k =
+  createMeshIndexed r vs ix =
+    meshHandle <$> primIO (prim__createMeshIndexed r.rt (vertsRaw vs) (vertsCount vs)
+                                                   (indicesRaw ix) (indicesCount ix))
+
+  loadTexture r src =
     let url = case src of
                 FromPath p => p
                 FromBase64 mime b64 => "data:" ++ mime ++ ";base64," ++ b64
-     in ignore (primIO (prim__loadTexture r.rt url
-          (\i => toPrim (k (if i < 0 then Nothing else Just (textureHandle i)) >> pure 0))))
+     in textureHandle <$> primIO (prim__loadTexture r.rt url)
 
   registerMaterial r {m} = do
     i <- primIO (prim__register r.rt (materialGlslVert {m}) (materialGlslFrag {m})
+                                (materialGlslLineVert {m})
+                                (if matLineEntry {m} then 1 else 0)
                                 (materialTexNames {m}) (materialSize {m}))
     pure (materialId i)
+
+  addMaterial r mid v = do
+    i <- readIORef r.assetCount
+    writeIORef r.assetCount (i + 1)
+    fillAsset r i v
+    let (t0, t1, t2, t3) = texIds v
+    a <- primIO (prim__addAsset r.rt (materialIdIndex mid) i t0 t1 t2 t3)
+    pure (handleFor a (alphaMode v))
+
+  updateMaterial r h v = do
+    let a = handleAsset h
+    fillAsset r a v
+    let (t0, t1, t2, t3) = texIds v
+    ignore (primIO (prim__updateAsset r.rt a t0 t1 t2 t3))
+    pure (handleFor a (alphaMode v))
 
   setLines r vs = do
     ignore (primIO (prim__setLines r.rt (vertsRaw vs) (vertsCount vs)))
@@ -173,13 +217,12 @@ Renderer Gl2 Gl2Frame where
 
   aspect r = primIO (prim__aspect r.gl)
 
-  -- The drawing buffer is the viewport, so only the viewport needs redoing.
-  resize r = do
-    changed <- syncSize r.canvas
-    when changed (ignore (primIO (prim__viewport r.gl)))
-
+  -- Also where resizes are absorbed: the drawing buffer is the viewport,
+  -- so re-syncing it is all a size change needs.
   beginFrame r cam lights t = do
     liftIO $ do
+      changed <- syncSize r.canvas
+      when changed (ignore (primIO (prim__viewport r.gl)))
       ratio <- primIO (prim__aspect r.gl)
       pokeGlobals r.globalScratch cam ratio lights t False
       writeIORef r.eyeFwd
@@ -189,34 +232,27 @@ Renderer Gl2 Gl2Frame where
                                   cc.red cc.green cc.blue))
     pure1 (Just (MkGl2Frame 0))
 
-  draw r (MkGl2Frame i) mid mesh model v =
+  draw r (MkGl2Frame i) mesh h model =
     case slot r.objScratch i of
       Nothing => pure1 (MkGl2Frame i)
       Just s => do
         liftIO $ do
-          let am = alphaMode v
-          pokeObject r.objScratch s model (alphaCode am) (alphaCutoff am) 0.0 0.0
-          writeMat (matWriter r.matScratch s) v
-          let (t0, t1, t2, t3) = texIds v
-          d <- if isBlend am then depthOf r model else pure 0.0
-          ignore (primIO (prim__draw r.rt (materialIdIndex mid) (meshIndex mesh)
-                                     (slotIndex s) t0 t1 t2 t3
-                                     (if isBlend am then 1 else 0) d))
+          pokeObject r.objScratch s model (handleCode h) (handleCutoff h) 0.0 0.0
+          d <- if handleBlend h then depthOf r model else pure 0.0
+          ignore (primIO (prim__draw r.rt (handleAsset h) (meshIndex mesh)
+                                     (slotIndex s) (if handleBlend h then 1 else 0) d))
         pure1 (MkGl2Frame (i + 1))
 
-  drawMany r (MkGl2Frame i) mid mesh batch = do
-    i' <- liftIO $ case batch of
+  drawMany r (MkGl2Frame i) mesh h models = do
+    i' <- liftIO $ case models of
       [] => pure i
-      ((mdl0, v0) :: _) => do
-        let am = alphaMode v0
-            (t0, t1, t2, t3) = texIds v0
-        filled <- fillBatch r.objScratch r.matScratch i batch
+      (mdl0 :: _) => do
+        filled <- fillModels r.objScratch i (handleCode h) (handleCutoff h) models
         let count = filled - i
         when (count > 0) $ do
-          d <- if isBlend am then depthOf r mdl0 else pure 0.0
-          ignore (primIO (prim__drawSlices r.rt (materialIdIndex mid)
-                                           (meshIndex mesh) i count t0 t1 t2 t3
-                                           (if isBlend am then 1 else 0) d))
+          d <- if handleBlend h then depthOf r mdl0 else pure 0.0
+          ignore (primIO (prim__drawSlices r.rt (handleAsset h) (meshIndex mesh)
+                                           i count (if handleBlend h then 1 else 0) d))
         pure filled
     pure1 (MkGl2Frame i')
 
@@ -232,7 +268,7 @@ Renderer Gl2 Gl2Frame where
             ignore (primIO (prim__drawLines r.rt (slotIndex s)))
         pure1 (MkGl2Frame (i + 1))
 
-  -- Upload the two slot buffers once, then replay the recorded frame:
-  -- opaque, lines, sorted transparency.
+  -- Upload the object buffer once, then replay the recorded frame:
+  -- opaque, gizmos, sorted transparency.
   endFrame r (MkGl2Frame i) =
     liftIO (ignore (primIO (prim__flush r.rt i objStride)))

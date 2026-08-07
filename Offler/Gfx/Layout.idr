@@ -14,8 +14,14 @@
 ||| bevy `AsBindGroup` role); the same generators run over those, so a custom
 ||| material's struct, bindings and size bound are derived, not asserted.
 |||
+||| Primitive topology is a property of a *mesh*, as it is in bevy: the
+||| `Topology` index determines a mesh's vertex layout, and pipelines are
+||| built per topology at material registration. The type checker selects
+||| the variant -- what bevy's runtime pipeline specialisation does with a
+||| mesh key, `MeshHandle t` does with an index.
+|||
 ||| The uniform layout rules below are WGSL's; for the field types offler
-||| admits (f32, vec2, vec3, vec4, mat4 -- no arrays, no nested structs)
+||| admits (f32, vec2, vec3, vec4, vec4 arrays, mat4 -- no nested structs)
 ||| GLSL's std140 lays out identically, which is what lets the WebGL2 backend
 ||| share the same scratch buffers byte for byte.
 module Offler.Gfx.Layout
@@ -29,8 +35,11 @@ import Data.String
 
 ||| The subset of WGSL types offler uses. Size and alignment follow the
 ||| uniform address space rules, which is where the padding comes from.
+||| `Vec4Arr n` is an `array<vec4<f32>, n>`: element stride 16 in WGSL and
+||| std140 alike, which is why vec4 is the only array element admitted --
+||| `array<vec3>` and `float[]` are exactly where the two rulebooks part.
 public export
-data FieldTy = F32 | Vec2 | Vec3 | Vec4 | Mat4
+data FieldTy = F32 | Vec2 | Vec3 | Vec4 | Mat4 | Vec4Arr Int
 
 public export
 sizeOf : FieldTy -> Int
@@ -39,6 +48,7 @@ sizeOf Vec2 = 8
 sizeOf Vec3 = 12
 sizeOf Vec4 = 16
 sizeOf Mat4 = 64
+sizeOf (Vec4Arr n) = 16 * n
 
 public export
 alignOf : FieldTy -> Int
@@ -47,6 +57,7 @@ alignOf Vec2 = 8
 alignOf Vec3 = 16
 alignOf Vec4 = 16
 alignOf Mat4 = 16
+alignOf (Vec4Arr _) = 16
 
 public export
 wgslTy : FieldTy -> String
@@ -55,17 +66,21 @@ wgslTy Vec2 = "vec2<f32>"
 wgslTy Vec3 = "vec3<f32>"
 wgslTy Vec4 = "vec4<f32>"
 wgslTy Mat4 = "mat4x4<f32>"
+wgslTy (Vec4Arr n) = "array<vec4<f32>, " ++ show n ++ ">"
 
+||| The GLSL member declaration: arrays suffix the *name*, so the whole
+||| declaration is generated per field rather than per type.
 public export
-glslTy : FieldTy -> String
-glslTy F32 = "float"
-glslTy Vec2 = "vec2"
-glslTy Vec3 = "vec3"
-glslTy Vec4 = "vec4"
-glslTy Mat4 = "mat4"
+glslDecl : String -> FieldTy -> String
+glslDecl n F32 = "float " ++ n
+glslDecl n Vec2 = "vec2 " ++ n
+glslDecl n Vec3 = "vec3 " ++ n
+glslDecl n Vec4 = "vec4 " ++ n
+glslDecl n Mat4 = "mat4 " ++ n
+glslDecl n (Vec4Arr k) = "vec4 " ++ n ++ "[" ++ show k ++ "]"
 
-||| Float32 components. A vertex attribute may have at most four, which is
-||| what `attrsOk` below checks.
+||| Float32 components of a *vertex attribute*. Arrays are not attributes,
+||| which `attrsOk` enforces.
 public export
 components : FieldTy -> Int
 components F32 = 1
@@ -73,6 +88,7 @@ components Vec2 = 2
 components Vec3 = 3
 components Vec4 = 4
 components Mat4 = 16
+components (Vec4Arr n) = 4 * n
 
 public export
 record Field where
@@ -111,44 +127,55 @@ joinSemi [x] = x
 joinSemi (x :: xs) = x ++ ";" ++ joinSemi xs
 
 --------------------------------------------------------------------------------
--- What the engine itself binds
+-- Topology
 
-||| The frame globals, binding 0: written once per frame by the engine.
+||| A mesh's primitive topology, as in bevy a property of the mesh, not of
+||| the draw call or a separate API. The vertex layout follows from it, and
+||| `MeshHandle` is indexed by it, so a pipeline variant is chosen by the
+||| type checker rather than by a runtime mesh key.
 public export
-globalFields : List Field
-globalFields =
-  [ MkField "proj" Mat4
-  , MkField "view" Mat4
-  , MkField "cam" Vec3
-  , MkField "time" F32
-  , MkField "lightDir" Vec3
-  , MkField "ambient" F32
-  , MkField "lightColor" Vec3
-  , MkField "pad0" F32
-  ]
+data Topology = Triangles | Lines
 
-||| The per-draw engine block, binding 1, picked out by a dynamic offset:
-||| the model matrix, and the lane the alpha mode rides in --
-||| `lane = (alphaMode, cutoff, unused, unused)`. Material data does *not*
-||| live here: it has its own block, described by the material type.
+||| The vertex layout each topology carries. Line vertices are a position
+||| padded to 16 bytes, so `poke16` fills four of them per foreign call and
+||| a per-frame overlay stays affordable to rebuild.
 public export
-objFields : List Field
-objFields =
-  [ MkField "model" Mat4
-  , MkField "lane" Vec4
-  ]
+vertexFieldsOf : Topology -> List Field
+vertexFieldsOf Triangles =
+  [MkField "pos" Vec3, MkField "normal" Vec3, MkField "uv" Vec2]
+vertexFieldsOf Lines = [MkField "pos" Vec3]
 
-||| The mesh vertex: position, normal, texture coordinates, packed tightly.
+||| What crosses the FFI for a topology: 0 triangles, 1 lines.
 public export
-meshVertexFields : List Field
-meshVertexFields = [MkField "pos" Vec3, MkField "normal" Vec3, MkField "uv" Vec2]
+topoCode : Topology -> Int
+topoCode Triangles = 0
+topoCode Lines = 1
 
-||| The line vertex: a position padded out to 16 bytes so `poke16` fills four
-||| vertices per foreign call. Lines have their own pipeline and shaders, so
-||| no other attribute needs faking.
+||| Bytes per vertex. Lines round up to 16 for the `poke16` discipline.
 public export
-lineVertexFields : List Field
-lineVertexFields = [MkField "pos" Vec3]
+strideOf : Topology -> Int
+strideOf Triangles = 32
+strideOf Lines = 16
+
+0 strideTrianglesOk : Offler.Gfx.Layout.strideOf Triangles
+                    = Offler.Gfx.Layout.packedEnd 0 (Offler.Gfx.Layout.vertexFieldsOf Triangles)
+strideTrianglesOk = Refl
+
+0 strideLinesOk : Offler.Gfx.Layout.strideOf Lines
+                = Offler.Gfx.Layout.roundUp (Offler.Gfx.Layout.packedEnd 0 (Offler.Gfx.Layout.vertexFieldsOf Lines)) 16
+strideLinesOk = Refl
+
+||| Floats per vertex, which is what `Verts` counts in.
+public export
+floatsOf : Topology -> Int
+floatsOf Triangles = 8
+floatsOf Lines = 4
+
+0 floatsTrianglesOk : Offler.Gfx.Layout.floatsOf Triangles * 4 = Offler.Gfx.Layout.strideOf Triangles
+floatsTrianglesOk = Refl
+
+0 floatsLinesOk : Offler.Gfx.Layout.floatsOf Lines * 4 = Offler.Gfx.Layout.strideOf Lines
+floatsLinesOk = Refl
 
 ||| No vertex attribute may need more than one location.
 public export
@@ -156,11 +183,44 @@ attrsOk : List Field -> Bool
 attrsOk [] = True
 attrsOk (MkField _ t :: fs) = components t <= 4 && attrsOk fs
 
-0 meshVertexFieldsOk : Offler.Gfx.Layout.attrsOk Offler.Gfx.Layout.meshVertexFields = True
-meshVertexFieldsOk = Refl
+0 triangleAttrsOk : Offler.Gfx.Layout.attrsOk (Offler.Gfx.Layout.vertexFieldsOf Triangles) = True
+triangleAttrsOk = Refl
 
-0 lineVertexFieldsOk : Offler.Gfx.Layout.attrsOk Offler.Gfx.Layout.lineVertexFields = True
-lineVertexFieldsOk = Refl
+0 lineAttrsOk : Offler.Gfx.Layout.attrsOk (Offler.Gfx.Layout.vertexFieldsOf Lines) = True
+lineAttrsOk = Refl
+
+--------------------------------------------------------------------------------
+-- What the engine itself binds
+
+||| The frame globals, binding 0: written once per frame by the engine.
+||| `counts` is (light count, ambient, unused, unused); the light arrays hold
+||| up to `maxLights` directions (xyz, normalised) and colours.
+public export
+maxLights : Int
+maxLights = 4
+
+public export
+globalFields : List Field
+globalFields =
+  [ MkField "proj" Mat4
+  , MkField "view" Mat4
+  , MkField "cam" Vec3
+  , MkField "time" F32
+  , MkField "counts" Vec4
+  , MkField "lightDirs" (Vec4Arr 4)
+  , MkField "lightColors" (Vec4Arr 4)
+  ]
+
+||| The per-draw engine block, binding 1, picked out by a dynamic offset:
+||| the model matrix, and the lane the alpha mode rides in --
+||| `lane = (alphaMode, cutoff, unused, unused)`. Material data does *not*
+||| live here: it has its own block, per material *asset*, at binding 2.
+public export
+objFields : List Field
+objFields =
+  [ MkField "model" Mat4
+  , MkField "lane" Vec4
+  ]
 
 --------------------------------------------------------------------------------
 -- Generated WGSL
@@ -187,8 +247,8 @@ wgslVertexStruct nm fs = "struct " ++ nm ++ " {\n" ++ go 0 fs ++ "};\n"
 public export
 wgslEngineDecls : String
 wgslEngineDecls =
-  wgslVertexStruct "VertexIn" meshVertexFields
-    ++ wgslVertexStruct "LineIn" lineVertexFields
+  wgslVertexStruct "VertexIn" (vertexFieldsOf Triangles)
+    ++ wgslVertexStruct "LineIn" (vertexFieldsOf Lines)
     ++ wgslStruct "Globals" globalFields
     ++ "@group(0) @binding(0) var<uniform> g : Globals;\n"
     ++ wgslStruct "Obj" objFields
@@ -220,7 +280,8 @@ wgslTextureDecls names = go 0 names
 ||| Everything prepended to a material's authored WGSL: the engine
 ||| declarations, the material's own uniform struct bound as `m`, its
 ||| textures, and the alpha helper. The authored body supplies `vs` and `fs`
-||| entry points against these names.
+||| entry points against these names -- and `vs_line`, if the material draws
+||| line meshes.
 public export
 wgslMaterialPrologue : (fields : List Field) -> (textures : List String) -> String
 wgslMaterialPrologue fields textures =
@@ -230,7 +291,7 @@ wgslMaterialPrologue fields textures =
     ++ wgslTextureDecls textures
     ++ wgslAlphaHelper
 
-||| The line pipeline's prologue: engine declarations only.
+||| The gizmo overlay pipeline's prologue: engine declarations only.
 public export
 wgslLinePrologue : String
 wgslLinePrologue = wgslEngineDecls
@@ -241,27 +302,23 @@ wgslLinePrologue = wgslEngineDecls
 ||| Members of a std140 block, flat in the shader's namespace -- `model`,
 ||| `lane`, `proj` and the material's field names are therefore reserved
 ||| words for authored GLSL bodies. Blocks are bound to their binding points
-||| by name at link time, so no layout qualifier is needed here.
+||| by name at link time.
 glslBlock : String -> List Field -> String
 glslBlock nm fs =
   "layout(std140) uniform " ++ nm ++ " {\n" ++ concatMap line fs ++ "};\n"
   where
     line : Field -> String
-    line (MkField n t) = "  " ++ glslTy t ++ " " ++ n ++ ";\n"
+    line (MkField n t) = "  " ++ glslDecl n t ++ ";\n"
 
 public export
-glslVertexIn : String
-glslVertexIn = go 0 meshVertexFields
+glslVertexInOf : Topology -> String
+glslVertexInOf t = go 0 (vertexFieldsOf t)
   where
     go : Int -> List Field -> String
     go _ [] = ""
-    go i (MkField n t :: fs) =
-      "layout(location=" ++ show i ++ ") in " ++ glslTy t ++ " " ++ n ++ ";\n"
+    go i (MkField n ty :: fs) =
+      "layout(location=" ++ show i ++ ") in " ++ glslDecl n ty ++ ";\n"
         ++ go (i + 1) fs
-
-public export
-glslLineVertexIn : String
-glslLineVertexIn = "layout(location=0) in vec3 pos;\n"
 
 public export
 glslEngineBlocks : String
@@ -288,18 +345,17 @@ spliceAfterVersion decls src = case lines src of
   (v :: rest) => unlines (v :: decls :: rest)
   [] => decls
 
-||| A material's vertex stage: attributes, engine blocks, and the material
-||| block (a vertex shader may read material data, as bevy's can).
+||| A material's vertex stage for a topology: that topology's attributes,
+||| the engine blocks, and the material block (a vertex shader may read
+||| material data, as bevy's can).
 public export
-glslMaterialVert : (fields : List Field) -> (src : String) -> String
-glslMaterialVert fields =
-  spliceAfterVersion (glslVertexIn ++ glslEngineBlocks ++ glslBlock "Mat" fields)
+glslMaterialVertOf : Topology -> (fields : List Field) -> (src : String) -> String
+glslMaterialVertOf t fields =
+  spliceAfterVersion (glslVertexInOf t ++ glslEngineBlocks ++ glslBlock "Mat" fields)
 
 ||| A material's fragment stage: engine blocks, material block, textures,
 ||| and the alpha helper. The default precision comes first -- ES 300
-||| requires it declared before any float appears, and the generated blocks
-||| would otherwise land ahead of the authored body's own declaration.
-||| (Repeating it in the body is legal and harmless.)
+||| requires it declared before any float appears.
 public export
 glslMaterialFrag : (fields : List Field) -> (textures : List String) -> (src : String) -> String
 glslMaterialFrag fields textures =
@@ -309,7 +365,7 @@ glslMaterialFrag fields textures =
 
 public export
 glslLineVert : (src : String) -> String
-glslLineVert = spliceAfterVersion (glslLineVertexIn ++ glslEngineBlocks)
+glslLineVert = spliceAfterVersion (glslVertexInOf Lines ++ glslEngineBlocks)
 
 public export
 glslLineFrag : (src : String) -> String
@@ -347,14 +403,14 @@ textureEntries n = go (cast n) 0
     go (S k) i =
       ("1," ++ show (3 + 2 * i)) :: ("2," ++ show (4 + 2 * i)) :: go k (i + 1)
 
-||| The bind group layout for a material pipeline: globals, the engine
+||| The bind group layout for a material's pipelines: globals, the engine
 ||| block, the material block sized from its fields, and its textures.
 public export
 materialBindSpec : (fields : List Field) -> (texCount : Int) -> String
 materialBindSpec fields texCount =
   joinSemi (engineEntries (structSize fields) ++ textureEntries texCount)
 
-||| The line pipeline binds only the engine blocks.
+||| The gizmo overlay pipeline binds only the engine blocks.
 public export
 lineBindSpec : String
 lineBindSpec =
@@ -373,12 +429,16 @@ vertexSpecOf fields = joinSemi (go 0 0 fields)
         :: go (i + 1) (at + sizeOf t) fs
 
 public export
+topologySpec : Topology -> String
+topologySpec t = vertexSpecOf (vertexFieldsOf t)
+
+public export
 meshVertexSpec : String
-meshVertexSpec = vertexSpecOf meshVertexFields
+meshVertexSpec = topologySpec Triangles
 
 public export
 lineVertexSpec : String
-lineVertexSpec = vertexSpecOf lineVertexFields
+lineVertexSpec = topologySpec Lines
 
 --------------------------------------------------------------------------------
 -- The constants, and the proofs that make them honest
@@ -386,7 +446,7 @@ lineVertexSpec = vertexSpecOf lineVertexFields
 ||| Bytes per frame-global uniform binding.
 public export
 globalSize : Int
-globalSize = 176
+globalSize = 288
 
 0 globalSizeOk : Offler.Gfx.Layout.globalSize = Offler.Gfx.Layout.structSize Offler.Gfx.Layout.globalFields
 globalSizeOk = Refl
@@ -394,7 +454,7 @@ globalSizeOk = Refl
 ||| The same, in Float32Array elements, which is what the pokes take.
 public export
 globalFloats : Int
-globalFloats = 44
+globalFloats = 72
 
 0 globalFloatsOk : Offler.Gfx.Layout.globalFloats * 4 = Offler.Gfx.Layout.globalSize
 globalFloatsOk = Refl
@@ -409,25 +469,36 @@ camFloat = 32
 camFloatOk = Refl
 
 public export
-lightDirFloat : Int
-lightDirFloat = 36
+metaFloat : Int
+metaFloat = 36
 
-0 lightDirFloatOk : Offler.Gfx.Layout.lightDirFloat * 4
-                  = Offler.Gfx.Layout.endAt 0
-                      [ MkField "proj" Mat4, MkField "view" Mat4
-                      , MkField "cam" Vec3, MkField "time" F32 ]
-lightDirFloatOk = Refl
+0 metaFloatOk : Offler.Gfx.Layout.metaFloat * 4
+              = Offler.Gfx.Layout.endAt 0
+                  [ MkField "proj" Mat4, MkField "view" Mat4
+                  , MkField "cam" Vec3, MkField "time" F32 ]
+metaFloatOk = Refl
 
 public export
-lightColorFloat : Int
-lightColorFloat = 40
+lightDirsFloat : Int
+lightDirsFloat = 40
 
-0 lightColorFloatOk : Offler.Gfx.Layout.lightColorFloat * 4
-                    = Offler.Gfx.Layout.endAt 0
-                        [ MkField "proj" Mat4, MkField "view" Mat4
-                        , MkField "cam" Vec3, MkField "time" F32
-                        , MkField "lightDir" Vec3, MkField "ambient" F32 ]
-lightColorFloatOk = Refl
+0 lightDirsFloatOk : Offler.Gfx.Layout.lightDirsFloat * 4
+                   = Offler.Gfx.Layout.endAt 0
+                       [ MkField "proj" Mat4, MkField "view" Mat4
+                       , MkField "cam" Vec3, MkField "time" F32
+                       , MkField "counts" Vec4 ]
+lightDirsFloatOk = Refl
+
+public export
+lightColorsFloat : Int
+lightColorsFloat = 56
+
+0 lightColorsFloatOk : Offler.Gfx.Layout.lightColorsFloat * 4
+                     = Offler.Gfx.Layout.endAt 0
+                         [ MkField "proj" Mat4, MkField "view" Mat4
+                         , MkField "cam" Vec3, MkField "time" F32
+                         , MkField "counts" Vec4, MkField "lightDirs" (Vec4Arr 4) ]
+lightColorsFloatOk = Refl
 
 ||| Bytes per engine object binding: the model matrix and the alpha lane.
 public export
@@ -451,8 +522,7 @@ objLaneOk = Refl
 ||| 256 on every device that ships -- and GLSL's
 ||| `UNIFORM_BUFFER_OFFSET_ALIGNMENT` is at most 256 likewise, so one stride
 ||| serves all three backends. A material block must fit in a slot, which is
-||| the `So (structSize (matFields {m}) <= 256)` bound `registerMaterial`
-||| demands at compile time.
+||| the `FitsSlot` bound `registerMaterial` demands at compile time.
 public export
 objStride : Int
 objStride = 256
@@ -467,44 +537,44 @@ objFloats = 64
 0 objFloatsOk : Offler.Gfx.Layout.objFloats * 4 = Offler.Gfx.Layout.objStride
 objFloatsOk = Refl
 
-||| One object slot and one material slot per draw per frame, so this is the
-||| ceiling on a frame's draw count. Two 2.6 MB buffers at 256 bytes a slot.
+||| One object slot per draw per frame, and one material slot per *asset*:
+||| this is both the ceiling on a frame's draw count and on the total
+||| retained material count. Two 2.6 MB buffers at 256 bytes a slot.
 public export
 maxObjects : Int
 maxObjects = 10240
 
 ||| The most texture slots a material may declare, which is what the C
-||| shim's fixed-arity draw call carries.
+||| shim's fixed-arity calls carry.
 public export
 maxTextureSlots : Int
 maxTextureSlots = 4
 
+||| Kept for the gizmo overlay path and the generated line shaders.
 public export
 meshStride : Int
 meshStride = 32
 
-0 meshStrideOk : Offler.Gfx.Layout.meshStride = Offler.Gfx.Layout.packedEnd 0 Offler.Gfx.Layout.meshVertexFields
+0 meshStrideOk : Offler.Gfx.Layout.meshStride = Offler.Gfx.Layout.strideOf Triangles
 meshStrideOk = Refl
 
-||| Floats per mesh vertex, which is what `Verts` is indexed by.
 public export
 meshFloats : Int
 meshFloats = 8
 
-0 meshFloatsOk : Offler.Gfx.Layout.meshFloats * 4 = Offler.Gfx.Layout.meshStride
+0 meshFloatsOk : Offler.Gfx.Layout.meshFloats = Offler.Gfx.Layout.floatsOf Triangles
 meshFloatsOk = Refl
 
 public export
 lineStride : Int
 lineStride = 16
 
-0 lineStrideOk : Offler.Gfx.Layout.lineStride
-               = Offler.Gfx.Layout.roundUp (Offler.Gfx.Layout.packedEnd 0 Offler.Gfx.Layout.lineVertexFields) 16
+0 lineStrideOk : Offler.Gfx.Layout.lineStride = Offler.Gfx.Layout.strideOf Lines
 lineStrideOk = Refl
 
 public export
 lineFloats : Int
 lineFloats = 4
 
-0 lineFloatsOk : Offler.Gfx.Layout.lineFloats * 4 = Offler.Gfx.Layout.lineStride
+0 lineFloatsOk : Offler.Gfx.Layout.lineFloats = Offler.Gfx.Layout.floatsOf Lines
 lineFloatsOk = Refl

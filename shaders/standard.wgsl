@@ -15,6 +15,20 @@ struct VsOut {
   @location(3) uv    : vec2<f32>,
 };
 
+// Line meshes carry only a position; the standard material draws them as
+// their (textured-at-origin, patterned) base colour -- pair with `unlit`.
+@vertex
+fn vs_line(v : LineIn) -> VsOut {
+  var out : VsOut;
+  let world = o.model * vec4<f32>(v.pos, 1.0);
+  out.world = world.xyz;
+  out.obj = v.pos;
+  out.nrm = vec3<f32>(0.0, 1.0, 0.0);
+  out.uv = vec2<f32>(0.0, 0.0);
+  out.pos = g.proj * g.view * world;
+  return out;
+}
+
 @vertex
 fn vs(v : VertexIn) -> VsOut {
   var out : VsOut;
@@ -91,23 +105,31 @@ fn fs(in : VsOut) -> @location(0) vec4<f32> {
   }
 
   let N = normalize(in.nrm);
-  let L = normalize(-g.lightDir);
   let V = normalize(g.cam - in.world);
-  let H = normalize(L + V);
 
   let metallic = m.params.x;
   let rough = clamp(m.params.y, 0.03, 1.0);
-
-  let diff = max(dot(N, L), 0.0);
   // Perceptual roughness to a Blinn-Phong exponent: matte 2, mirror ~1400.
   let shininess = exp2(1.0 + 9.5 * (1.0 - rough));
-  let spec = pow(max(dot(N, H), 0.0), shininess) * (1.0 - 0.6 * rough);
+  let specScale = 1.0 - 0.6 * rough;
+
+  // g.counts = (light count, ambient, -, -); up to maxLights directionals.
+  var diffAcc = vec3<f32>(0.0);
+  var specAcc = vec3<f32>(0.0);
+  let count = i32(g.counts.x);
+  for (var i = 0; i < count; i = i + 1) {
+    let L = normalize(-g.lightDirs[i].xyz);
+    let H = normalize(L + V);
+    let lc = g.lightColors[i].rgb;
+    diffAcc = diffAcc + max(dot(N, L), 0.0) * lc;
+    specAcc = specAcc + pow(max(dot(N, H), 0.0), shininess) * specScale * lc;
+  }
 
   let specTint = mix(vec3<f32>(1.0), base, vec3<f32>(metallic));
   let diffuse = base * (1.0 - 0.9 * metallic);
 
-  let colour = diffuse * (vec3<f32>(g.ambient) + diff * g.lightColor)
-             + specTint * spec * g.lightColor
+  let colour = diffuse * (vec3<f32>(g.counts.y) + diffAcc)
+             + specTint * specAcc
              + m.emissive.rgb;
 
   return offlerAlpha(vec4<f32>(pow(colour, vec3<f32>(0.4545)), base4.a));

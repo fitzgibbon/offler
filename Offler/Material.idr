@@ -119,6 +119,8 @@ Material StandardMaterial where
   matWgsl = wgslSrc
   matGlslVert = vertSrc
   matGlslFrag = fragSrc
+  matLineEntry = True
+  matGlslLineVert = lineStdVertSrc
   alphaMode v = v.alpha
   matTextures v = [v.baseColorTexture]
   writeMat w v = do

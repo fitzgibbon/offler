@@ -55,11 +55,17 @@ void offler_f32_poke16(float *a, int o,
   a[o+12]=(float)x12; a[o+13]=(float)x13; a[o+14]=(float)x14; a[o+15]=(float)x15;
 }
 
+unsigned *offler_u32_new(int n) { return (unsigned *)calloc((size_t)n, sizeof(unsigned)); }
+void offler_u32_poke(unsigned *a, int i, int v) { a[i] = (unsigned)v; }
+
 /* ------------------------------------------------------------------- types */
 
 typedef struct {
   WGPUBuffer buf;
   int count;
+  int topo;              /* 0 triangles, 1 lines */
+  WGPUBuffer ibuf;       /* index buffer, or NULL */
+  int icount;
 } Mesh;
 
 typedef struct {
@@ -68,7 +74,7 @@ typedef struct {
 } BGEntry;
 
 typedef struct {
-  WGPURenderPipeline opaque, blend;
+  WGPURenderPipeline triO, triB, lineO, lineB;
   WGPUBindGroupLayout bgl;
   int texCount;
   int matSize;
@@ -77,8 +83,7 @@ typedef struct {
 } Mat;
 
 typedef struct {
-  int mat, mesh, slot;
-  int tex[MAX_TEX_SLOTS];
+  int asset, mesh, slot;
   double depth;
 } Pending;
 
@@ -102,9 +107,16 @@ typedef struct {
 
   /* Told to us by Idris, from Offler.Gfx.Layout -- not defined twice. */
   int globalSize, objSize, objStride, maxObjects;
-  int meshStride;
+  int meshStride, lineStride;
   WGPUVertexAttribute meshAttrs[MAX_ATTRS];
   int meshAttrCount;
+  WGPUVertexAttribute lineAttrs[MAX_ATTRS];
+  int lineAttrCount;
+
+  /* Material assets: a slot of the material buffer, textures, and the
+   * cached bind group made when the asset was. */
+  struct Asset { int mat, slot; int tex[MAX_TEX_SLOTS]; WGPUBindGroup bg; } *assets;
+  int assetCount, assetCap;
 
   Mesh *meshes;
   int meshCount, meshCap;
@@ -374,6 +386,58 @@ static WGPURenderPipeline make_pipeline(Ctx *c, WGPUShaderModule mod,
   return wgpuDeviceCreateRenderPipeline(c->device, &rpd);
 }
 
+static WGPURenderPipeline make_line_pipeline_impl(Ctx *c, WGPUShaderModule mod,
+                                                  WGPUPipelineLayout layout,
+                                                  int blend) {
+  WGPUVertexBufferLayout vbl = { .stepMode = WGPUVertexStepMode_Vertex,
+                                 .arrayStride = (uint64_t)c->lineStride,
+                                 .attributeCount = (size_t)c->lineAttrCount,
+                                 .attributes = c->lineAttrs };
+  WGPUBlendState blendState = {
+    .color = { .operation = WGPUBlendOperation_Add,
+               .srcFactor = WGPUBlendFactor_SrcAlpha,
+               .dstFactor = WGPUBlendFactor_OneMinusSrcAlpha },
+    .alpha = { .operation = WGPUBlendOperation_Add,
+               .srcFactor = WGPUBlendFactor_One,
+               .dstFactor = WGPUBlendFactor_OneMinusSrcAlpha },
+  };
+  WGPUColorTargetState target = { .format = c->format,
+                                  .blend = blend ? &blendState : NULL,
+                                  .writeMask = WGPUColorWriteMask_All };
+  WGPUFragmentState frag = { .module = mod, .entryPoint = SV("fs"),
+                             .targetCount = 1, .targets = &target };
+  WGPUDepthStencilState depth = {
+    .format = WGPUTextureFormat_Depth24Plus,
+    .depthWriteEnabled = blend ? WGPUOptionalBool_False : WGPUOptionalBool_True,
+    .depthCompare = WGPUCompareFunction_Less,
+    .stencilFront = { .compare = WGPUCompareFunction_Always },
+    .stencilBack  = { .compare = WGPUCompareFunction_Always },
+  };
+  WGPURenderPipelineDescriptor rpd = {
+    .layout = layout,
+    .vertex = { .module = mod, .entryPoint = SV("vs_line"),
+                .bufferCount = 1, .buffers = &vbl },
+    .primitive = { .topology = WGPUPrimitiveTopology_LineList,
+                   .frontFace = WGPUFrontFace_CCW,
+                   .cullMode = WGPUCullMode_None },
+    .depthStencil = &depth,
+    .multisample = { .count = 1, .mask = 0xFFFFFFFF },
+    .fragment = &frag,
+  };
+  return wgpuDeviceCreateRenderPipeline(c->device, &rpd);
+}
+
+static WGPURenderPipeline make_line_pipeline(Ctx *c, WGPUShaderModule mod,
+                                             WGPUPipelineLayout layout,
+                                             int blend) {
+  return make_line_pipeline_impl(c, mod, layout, blend);
+}
+
+/* A line-topology variant from a material module's vs_line entry point. */
+static WGPURenderPipeline make_line_pipeline(Ctx *c, WGPUShaderModule mod,
+                                             WGPUPipelineLayout layout,
+                                             int blend);
+
 /* --------------------------------------------------------------------- init */
 
 void *offler_init(const char *title,
@@ -387,7 +451,9 @@ void *offler_init(const char *title,
   c->objStride = objStride;
   c->maxObjects = maxObjects;
   c->meshStride = meshStride;
+  c->lineStride = lineStride;
   c->meshAttrCount = parse_attrs(meshVertSpec, c->meshAttrs);
+  c->lineAttrCount = parse_attrs(lineVertSpec, c->lineAttrs);
 
   if (!SDL_Init(SDL_INIT_VIDEO)) {
     fprintf(stderr, "offler: SDL_Init: %s\n", SDL_GetError());
@@ -486,9 +552,8 @@ void *offler_init(const char *title,
     WGPUPipelineLayoutDescriptor pld = { .bindGroupLayoutCount = 1,
                                          .bindGroupLayouts = &bgl };
     WGPUPipelineLayout layout = wgpuDeviceCreatePipelineLayout(c->device, &pld);
-    WGPUVertexAttribute lattrs[MAX_ATTRS];
-    int nla = parse_attrs(lineVertSpec, lattrs);
-    c->linePipeline = make_pipeline(c, mod, layout, lattrs, nla, lineStride, 1, 1);
+    c->linePipeline = make_pipeline(c, mod, layout, c->lineAttrs, c->lineAttrCount,
+                                    lineStride, 1, 1);
     WGPUBindGroupEntry bge[2] = {
       { .binding = 0, .buffer = c->globalBuf, .size = (uint64_t)globalSize },
       { .binding = 1, .buffer = c->objBuf, .size = (uint64_t)objSize },
@@ -505,13 +570,16 @@ void *offler_init(const char *title,
   c->mats = (Mat *)calloc((size_t)c->matCap, sizeof(Mat));
   c->pendCap = 64;
   c->pend = (Pending *)calloc((size_t)c->pendCap, sizeof(Pending));
+  c->assetCap = 16;
+  c->assets = (struct Asset *)calloc((size_t)c->assetCap, sizeof(struct Asset));
 
   return c;
 }
 
 /* ------------------------------------------------------------- registration */
 
-int offler_register_material(void *p, const char *wgsl, const char *bindSpec) {
+int offler_register_material(void *p, const char *wgsl, const char *bindSpec,
+                             int hasLine) {
   Ctx *c = (Ctx *)p;
   if (c->matCount == c->matCap) {
     c->matCap *= 2;
@@ -536,10 +604,14 @@ int offler_register_material(void *p, const char *wgsl, const char *bindSpec) {
                                        .bindGroupLayouts = &m->bgl };
   WGPUPipelineLayout layout = wgpuDeviceCreatePipelineLayout(c->device, &pld);
 
-  m->opaque = make_pipeline(c, mod, layout, c->meshAttrs, c->meshAttrCount,
-                            c->meshStride, 0, 0);
-  m->blend = make_pipeline(c, mod, layout, c->meshAttrs, c->meshAttrCount,
-                           c->meshStride, 0, 1);
+  m->triO = make_pipeline(c, mod, layout, c->meshAttrs, c->meshAttrCount,
+                          c->meshStride, 0, 0);
+  m->triB = make_pipeline(c, mod, layout, c->meshAttrs, c->meshAttrCount,
+                          c->meshStride, 0, 1);
+  if (hasLine) {
+    m->lineO = make_line_pipeline(c, mod, layout, 0);
+    m->lineB = make_line_pipeline(c, mod, layout, 1);
+  }
   m->bgCap = 4;
   m->bgs = (BGEntry *)calloc((size_t)m->bgCap, sizeof(BGEntry));
   return c->matCount++;
@@ -571,13 +643,25 @@ static int add_texture(Ctx *c, unsigned char *rgba, int w, int h) {
   return c->texCount++;
 }
 
+/* A decode failure still yields a valid handle -- bound to the shared 1x1
+ * white, matching the browser backends' texture-not-yet-loaded behaviour. */
+static int white_entry(Ctx *c) {
+  if (c->texCount == c->texCap) {
+    c->texCap *= 2;
+    c->texs = (WGPUTextureView *)realloc(c->texs,
+                (size_t)c->texCap * sizeof(WGPUTextureView));
+  }
+  c->texs[c->texCount] = c->white;
+  return c->texCount++;
+}
+
 int offler_texture_file(void *p, const char *path) {
   Ctx *c = (Ctx *)p;
   int w, h, n;
   unsigned char *rgba = stbi_load(path, &w, &h, &n, 4);
   if (!rgba) {
     fprintf(stderr, "offler: could not decode %s: %s\n", path, stbi_failure_reason());
-    return -1;
+    return white_entry(c);
   }
   int id = add_texture(c, rgba, w, h);
   stbi_image_free(rgba);
@@ -594,7 +678,7 @@ int offler_texture_b64(void *p, const char *b64) {
   if (!rgba) {
     fprintf(stderr, "offler: could not decode embedded image: %s\n",
             stbi_failure_reason());
-    return -1;
+    return white_entry(c);
   }
   int id = add_texture(c, rgba, w, h);
   stbi_image_free(rgba);
@@ -681,19 +765,43 @@ void offler_resize(void *p) { configure((Ctx *)p); }
 
 /* ----------------------------------------------------------------- meshes */
 
-int offler_create_mesh(void *p, float *verts, int floatCount, int vertexCount) {
-  Ctx *c = (Ctx *)p;
+static int push_mesh(Ctx *c, Mesh m) {
   if (c->meshCount == c->meshCap) {
     c->meshCap *= 2;
     c->meshes = (Mesh *)realloc(c->meshes, (size_t)c->meshCap * sizeof(Mesh));
   }
-  size_t bytes = (size_t)floatCount * sizeof(float);
-  WGPUBufferDescriptor bd = { .usage = WGPUBufferUsage_Vertex | WGPUBufferUsage_CopyDst,
+  c->meshes[c->meshCount] = m;
+  return c->meshCount++;
+}
+
+static WGPUBuffer upload_static(Ctx *c, const void *data, size_t bytes,
+                                WGPUBufferUsage usage) {
+  WGPUBufferDescriptor bd = { .usage = usage | WGPUBufferUsage_CopyDst,
                               .size = bytes };
   WGPUBuffer buf = wgpuDeviceCreateBuffer(c->device, &bd);
-  wgpuQueueWriteBuffer(c->queue, buf, 0, verts, bytes);
-  c->meshes[c->meshCount] = (Mesh){ .buf = buf, .count = vertexCount };
-  return c->meshCount++;
+  wgpuQueueWriteBuffer(c->queue, buf, 0, data, bytes);
+  return buf;
+}
+
+int offler_create_mesh(void *p, float *verts, int vertexCount, int topo) {
+  Ctx *c = (Ctx *)p;
+  int floats = vertexCount * (topo == 1 ? c->lineStride : c->meshStride) / 4;
+  WGPUBuffer buf = upload_static(c, verts, (size_t)floats * sizeof(float),
+                                 WGPUBufferUsage_Vertex);
+  return push_mesh(c, (Mesh){ .buf = buf, .count = vertexCount, .topo = topo,
+                              .ibuf = NULL, .icount = 0 });
+}
+
+int offler_create_mesh_indexed(void *p, float *verts, int vertexCount,
+                               unsigned *idx, int idxCount) {
+  Ctx *c = (Ctx *)p;
+  int floats = vertexCount * c->meshStride / 4;
+  WGPUBuffer buf = upload_static(c, verts, (size_t)floats * sizeof(float),
+                                 WGPUBufferUsage_Vertex);
+  WGPUBuffer ib = upload_static(c, idx, (size_t)idxCount * sizeof(unsigned),
+                                WGPUBufferUsage_Index);
+  return push_mesh(c, (Mesh){ .buf = buf, .count = vertexCount, .topo = 0,
+                              .ibuf = ib, .icount = idxCount });
 }
 
 void offler_set_lines(void *p, float *verts, int floatCount, int vertexCount) {
@@ -750,22 +858,66 @@ static WGPUBindGroup bg_for(Ctx *c, int matIdx, const int *tex) {
   return m->bgs[m->bgCount++].bg;
 }
 
+int offler_add_asset(void *p, int mat, int slot,
+                     int t0, int t1, int t2, int t3) {
+  Ctx *c = (Ctx *)p;
+  if (c->assetCount == c->assetCap) {
+    c->assetCap *= 2;
+    c->assets = (struct Asset *)realloc(c->assets,
+                  (size_t)c->assetCap * sizeof(struct Asset));
+  }
+  struct Asset *a = &c->assets[c->assetCount];
+  a->mat = mat;
+  a->slot = slot;
+  a->tex[0] = t0; a->tex[1] = t1; a->tex[2] = t2; a->tex[3] = t3;
+  a->bg = bg_for(c, mat, a->tex);
+  return c->assetCount++;
+}
+
+void offler_update_asset(void *p, int ai, int t0, int t1, int t2, int t3) {
+  Ctx *c = (Ctx *)p;
+  if (ai < 0 || ai >= c->assetCount) return;
+  struct Asset *a = &c->assets[ai];
+  a->tex[0] = t0; a->tex[1] = t1; a->tex[2] = t2; a->tex[3] = t3;
+  a->bg = bg_for(c, a->mat, a->tex);
+}
+
+/* One asset's 256-byte slot, uploaded when the asset is made or updated --
+ * never per draw. */
+void offler_upload_mat_slot(void *p, float *matData, int slot) {
+  Ctx *c = (Ctx *)p;
+  wgpuQueueWriteBuffer(c->queue, c->matBuf,
+                       (uint64_t)slot * c->objStride,
+                       matData + (size_t)slot * (c->objStride / 4),
+                       (size_t)c->objStride);
+}
+
 static void exec_draw(Ctx *c, const Pending *d, int blend) {
-  Mat *m = &c->mats[d->mat];
+  struct Asset *a = &c->assets[d->asset];
+  Mat *m = &c->mats[a->mat];
   Mesh *mm = &c->meshes[d->mesh];
-  WGPURenderPipeline pipe = blend ? m->blend : m->opaque;
+  WGPURenderPipeline pipe = mm->topo == 1 ? (blend ? m->lineB : m->lineO)
+                                          : (blend ? m->triB : m->triO);
+  if (!pipe) return;
   if (pipe != c->boundPipe) {
     wgpuRenderPassEncoderSetPipeline(c->pass, pipe);
     c->boundPipe = pipe;
   }
   if (mm->buf != c->boundVerts) {
     wgpuRenderPassEncoderSetVertexBuffer(c->pass, 0, mm->buf, 0, WGPU_WHOLE_SIZE);
+    if (mm->ibuf)
+      wgpuRenderPassEncoderSetIndexBuffer(c->pass, mm->ibuf,
+                                          WGPUIndexFormat_Uint32, 0,
+                                          WGPU_WHOLE_SIZE);
     c->boundVerts = mm->buf;
   }
   uint32_t offs[2] = { (uint32_t)(d->slot * c->objStride),
-                       (uint32_t)(d->slot * c->objStride) };
-  wgpuRenderPassEncoderSetBindGroup(c->pass, 0, bg_for(c, d->mat, d->tex), 2, offs);
-  wgpuRenderPassEncoderDraw(c->pass, (uint32_t)mm->count, 1, 0, 0);
+                       (uint32_t)(a->slot * c->objStride) };
+  wgpuRenderPassEncoderSetBindGroup(c->pass, 0, a->bg, 2, offs);
+  if (mm->ibuf)
+    wgpuRenderPassEncoderDrawIndexed(c->pass, (uint32_t)mm->icount, 1, 0, 0, 0);
+  else
+    wgpuRenderPassEncoderDraw(c->pass, (uint32_t)mm->count, 1, 0, 0);
 }
 
 static void push_pending(Ctx *c, const Pending *d) {
@@ -776,26 +928,25 @@ static void push_pending(Ctx *c, const Pending *d) {
   c->pend[c->pendCount++] = *d;
 }
 
-void offler_draw(void *p, int mat, int mesh, int slot,
-                 int t0, int t1, int t2, int t3, int blend, double depth) {
+void offler_draw(void *p, int asset, int mesh, int slot, int blend,
+                 double depth) {
   Ctx *c = (Ctx *)p;
-  if (!c->pass || mat < 0 || mat >= c->matCount
+  if (!c->pass || asset < 0 || asset >= c->assetCount
       || mesh < 0 || mesh >= c->meshCount || slot >= c->maxObjects) return;
-  Pending d = { .mat = mat, .mesh = mesh, .slot = slot,
-                .tex = { t0, t1, t2, t3 }, .depth = depth };
+  Pending d = { .asset = asset, .mesh = mesh, .slot = slot, .depth = depth };
   if (blend) push_pending(c, &d);
   else exec_draw(c, &d, 0);
 }
 
-void offler_draw_slices(void *p, int mat, int mesh, int first, int count,
-                        int t0, int t1, int t2, int t3, int blend, double depth) {
+void offler_draw_slices(void *p, int asset, int mesh, int first, int count,
+                        int blend, double depth) {
   Ctx *c = (Ctx *)p;
-  if (!c->pass || mat < 0 || mat >= c->matCount
+  if (!c->pass || asset < 0 || asset >= c->assetCount
       || mesh < 0 || mesh >= c->meshCount) return;
   for (int i = 0; i < count; i++) {
     if (first + i >= c->maxObjects) return;
-    Pending d = { .mat = mat, .mesh = mesh, .slot = first + i,
-                  .tex = { t0, t1, t2, t3 }, .depth = depth };
+    Pending d = { .asset = asset, .mesh = mesh, .slot = first + i,
+                  .depth = depth };
     if (blend) push_pending(c, &d);
     else exec_draw(c, &d, 0);
   }
@@ -822,6 +973,12 @@ static int pend_cmp(const void *a, const void *b) {
 /* Returns 0 if the frame cannot be started, so Idris can skip it. */
 int offler_begin(void *p, float *globals, double r, double g, double b) {
   Ctx *c = (Ctx *)p;
+
+  /* Absorb resizes here, so applications never handle them: the surface
+   * and the depth attachment follow the window together. */
+  int w = 0, h = 0;
+  SDL_GetWindowSizeInPixels(c->window, &w, &h);
+  if (w != c->width || h != c->height) configure(c);
 
   wgpuQueueWriteBuffer(c->queue, c->globalBuf, 0, globals, (size_t)c->globalSize);
 
@@ -860,15 +1017,14 @@ int offler_begin(void *p, float *globals, double r, double g, double b) {
   return 1;
 }
 
-/* One upload per buffer for every draw, then the sorted transparent phase,
- * then submit. Queue writes are ordered before the submit that follows. */
-void offler_end(void *p, float *objects, float *materials, int floatCount) {
+/* One upload of the engine blocks for every draw -- material data went up
+ * when the assets were made -- then the sorted transparent phase, then
+ * submit. Queue writes are ordered before the submit that follows. */
+void offler_end(void *p, float *objects, int floatCount) {
   Ctx *c = (Ctx *)p;
   if (!c->pass) return;
   if (floatCount > 0) {
     wgpuQueueWriteBuffer(c->queue, c->objBuf, 0, objects,
-                         (size_t)floatCount * sizeof(float));
-    wgpuQueueWriteBuffer(c->queue, c->matBuf, 0, materials,
                          (size_t)floatCount * sizeof(float));
   }
   if (c->pendCount > 0) {
@@ -899,6 +1055,7 @@ void offler_quit(void *p) {
   free(c->texs);
   for (int i = 0; i < c->matCount; i++) free(c->mats[i].bgs);
   free(c->mats);
+  free(c->assets);
   free(c->pend);
   free(c);
 }

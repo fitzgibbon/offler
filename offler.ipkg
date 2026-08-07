@@ -19,6 +19,7 @@ modules = Offler.Camera
         , Offler.Material
         , Offler.Math
         , Offler.Mesh
+        , Offler.Scene
         , Offler.Native.Platform
         , Offler.Native.Wgpu
         , Offler.Shaders

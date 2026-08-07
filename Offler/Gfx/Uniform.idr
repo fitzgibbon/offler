@@ -2,14 +2,15 @@
 ||| them.
 |||
 ||| `Offler.Gfx.Layout` says where each engine field goes; this says who may
-||| put one there. Three buffers cross to the GPU each frame: the globals,
-||| the per-draw engine blocks (model matrix and alpha lane), and the
-||| per-draw material blocks, written through the `MatWriter` a material's
-||| `writeMat` receives. The object and material buffers share slot indices:
-||| draw `i` reads slot `i` of both, picked out by the same pair of dynamic
-||| offsets.
+||| put one there. Three buffers cross to the GPU: the globals each frame,
+||| the per-draw engine blocks (model matrix and alpha lane) each frame, and
+||| the per-*asset* material blocks -- written through the `MatWriter` a
+||| material's `writeMat` receives when the asset is added or updated, not
+||| per draw. A draw pairs an object slot with its material's asset slot
+||| through two independent dynamic offsets.
 module Offler.Gfx.Uniform
 
+import Data.List
 import Offler.Camera
 import Offler.Color
 import Offler.Gfx.Array
@@ -190,10 +191,11 @@ fillWith a first batch k =
 ||| to rewrite the projection's z row into [0,1] clip space, WebGL2 passes
 ||| `False` because GL wants [-1,1].
 |||
-||| Every offset here is a literal against a known capacity, so all the
-||| bounds are discharged at compile time and the last `poke4`, at 40, is
-||| exactly flush with the end. Add a field to `globalFields` and this stops
-||| compiling rather than running off the end of the buffer.
+||| The literal offsets are discharged at compile time; the per-light
+||| offsets are computed from a bounded index, one `window` test each on a
+||| once-per-frame path. The last colour lane sits exactly flush with the
+||| end: grow `globalFields` and this stops compiling rather than running
+||| off the buffer.
 export
 pokeGlobals : GlobalScratch -> Camera -> (aspectRatio : Double) -> Lights
             -> (time : Double) -> (correctClip : Bool) -> IO ()
@@ -202,8 +204,20 @@ pokeGlobals a cam aspectRatio lights t correct = do
   when correct (correctClipZ a (here 0))
   pokeMat a (here 16) (viewMatrix cam)
   let eye = eyeOf cam
-      dir = normalize3 lights.direction
-      lc = lights.color
+      ls = take (cast maxLights) lights.directionals
   poke4 a (here 32) eye.vx eye.vy eye.vz t
-  poke4 a (here 36) dir.vx dir.vy dir.vz lights.ambient
-  poke4 a (here 40) lc.red lc.green lc.blue 0.0
+  poke4 a (here 36) (cast (length ls)) lights.ambient 0.0 0.0
+  pokeLights 0 ls
+  where
+    pokeLights : Int -> List DirectionalLight -> IO ()
+    pokeLights _ [] = pure ()
+    pokeLights i (l :: rest) = do
+      let d = normalize3 l.direction
+          c = l.color
+      case window {w = 4} a (lightDirsFloat + i * 4) of
+        Just o => poke4 a o d.vx d.vy d.vz 0.0
+        Nothing => pure ()
+      case window {w = 4} a (lightColorsFloat + i * 4) of
+        Just o => poke4 a o c.red c.green c.blue 0.0
+        Nothing => pure ()
+      pokeLights (i + 1) rest

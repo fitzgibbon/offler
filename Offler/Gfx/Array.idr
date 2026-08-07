@@ -17,6 +17,8 @@ module Offler.Gfx.Array
 -- bound to be discharged by proof search.
 import public Data.So
 
+import Offler.Gfx.Layout
+
 %default total
 
 ||| Opaque so a vertex buffer cannot be confused with any other foreign handle,
@@ -146,53 +148,94 @@ peek a (MkAt i) = primIO (prim__peek (raw a) i)
 -- Vertex data
 
 ||| An array together with the number of vertices it holds: `count` times
-||| `stride` floats, and the array is big enough for them.
+||| the topology's stride in floats, and the array is big enough for them.
 |||
-||| A backend can neither be told a count the buffer cannot back nor be handed
-||| vertices of the wrong stride: different strides are different types.
+||| Indexed by `Topology`, because in bevy's model -- and offler's -- the
+||| primitive topology is a property of the mesh, and the vertex layout
+||| follows from it. A backend can neither be told a count the buffer cannot
+||| back nor be handed line vertices where triangles are expected: different
+||| topologies are different types.
 export
-data Verts : (0 stride : Int) -> Type where
-  MkVerts : AnyPtr -> (count : Int) -> (floats : Int) -> Verts stride
+data Verts : (0 t : Topology) -> Type where
+  MkVerts : AnyPtr -> (count : Int) -> (floats : Int) -> Verts t
 
 ||| A buffer to fill, and the handle to hand over once it is filled.
 ||| (The capacity field is `bufCap` rather than `cap` so the projection does
 ||| not shadow every signature that binds `cap` as an implicit.)
 public export
-record VertBuf (0 stride : Int) where
+record VertBuf (0 t : Topology) where
   constructor MkVertBuf
   0 bufCap : Int
   arr : F32Array bufCap
-  ||| What `createMesh` and `setLines` take. Nothing can be written through it.
-  handle : Verts stride
+  ||| What `createMesh` takes. Nothing can be written through it.
+  handle : Verts t
 
-||| Allocate for exactly `count` vertices and pair the array with its count in
-||| one step.
+||| Allocate for exactly `count` vertices of a topology and pair the array
+||| with its count in one step.
 |||
 ||| The pairing is the point. A checking constructor -- take an array and a
-||| count, compare, return `Maybe` -- would leave the caller a failure case that
-||| cannot happen and no way to say so. Allocating and counting together removes
-||| the disagreement instead of detecting it: there is one number, used twice,
-||| here.
+||| count, compare, return `Maybe` -- would leave the caller a failure case
+||| that cannot happen and no way to say so. Allocating and counting together
+||| removes the disagreement instead of detecting it: there is one number,
+||| used twice, here.
 export
-newVerts : {stride : Int} -> (count : Int) -> IO (VertBuf stride)
+newVerts : {t : Topology} -> (count : Int) -> IO (VertBuf t)
 newVerts count =
   let n = max 0 count
-      floats = n * stride
+      floats = n * floatsOf t
    in do a <- newF32 (max 1 floats)
          pure (MkVertBuf (max 1 floats) a (MkVerts (raw a) n floats))
 
 export %inline
-vertsRaw : Verts stride -> AnyPtr
+vertsRaw : Verts t -> AnyPtr
 vertsRaw (MkVerts p _ _) = p
 
 ||| Vertices, which is what a draw call counts.
 export %inline
-vertsCount : Verts stride -> Int
+vertsCount : Verts t -> Int
 vertsCount (MkVerts _ n _) = n
 
 ||| Floats, which is what an upload counts. Kept beside the count rather than
 ||| recomputed by each backend, because recomputing it is where the two would
 ||| drift apart again.
 export %inline
-vertsFloats : Verts stride -> Int
+vertsFloats : Verts t -> Int
 vertsFloats (MkVerts _ _ f) = f
+
+--------------------------------------------------------------------------------
+-- Index data
+
+%foreign "C:offler_u32_new,liboffler"
+         "javascript:lambda:(n)=>new Uint32Array(n)"
+prim__u32new : Int -> PrimIO AnyPtr
+
+%foreign "C:offler_u32_poke,liboffler"
+         "javascript:lambda:(a,i,v)=>{a[i]=v}"
+prim__u32poke : AnyPtr -> Int -> Int -> PrimIO ()
+
+||| A mesh's index list: `count` u32 indices, allocated and counted in one
+||| step like `Verts`. Writes are bounds-tested with a bare comparison --
+||| indices are built once, at mesh construction, off every hot path.
+export
+data Indices : Type where
+  MkIndices : AnyPtr -> (len : Int) -> Indices
+
+export
+newIndices : (count : Int) -> IO Indices
+newIndices count = do
+  let n = max 1 count
+  p <- primIO (prim__u32new n)
+  pure (MkIndices p (max 0 count))
+
+export
+pokeIndex : Indices -> (i : Int) -> (v : Int) -> IO ()
+pokeIndex (MkIndices p n) i v =
+  when (i >= 0 && i < n) (primIO (prim__u32poke p i v))
+
+export %inline
+indicesRaw : Indices -> AnyPtr
+indicesRaw (MkIndices p _) = p
+
+export %inline
+indicesCount : Indices -> Int
+indicesCount (MkIndices _ n) = n

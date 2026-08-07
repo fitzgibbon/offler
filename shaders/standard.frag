@@ -63,23 +63,32 @@ void main() {
   }
 
   vec3 N = normalize(vNormal);
-  vec3 L = normalize(-lightDir);
   vec3 V = normalize(cam - vWorld);
-  vec3 H = normalize(L + V);
 
   float metallic = params.x;
   float rough = clamp(params.y, 0.03, 1.0);
-
-  float diff = max(dot(N, L), 0.0);
   // Perceptual roughness to a Blinn-Phong exponent: matte 2, mirror ~1400.
   float shininess = exp2(1.0 + 9.5 * (1.0 - rough));
-  float spec = pow(max(dot(N, H), 0.0), shininess) * (1.0 - 0.6 * rough);
+  float specScale = 1.0 - 0.6 * rough;
+
+  // counts = (light count, ambient, -, -); up to maxLights directionals.
+  vec3 diffAcc = vec3(0.0);
+  vec3 specAcc = vec3(0.0);
+  int count = int(counts.x);
+  for (int i = 0; i < 4; i++) {
+    if (i >= count) break;
+    vec3 L = normalize(-lightDirs[i].xyz);
+    vec3 H = normalize(L + V);
+    vec3 lc = lightColors[i].rgb;
+    diffAcc += max(dot(N, L), 0.0) * lc;
+    specAcc += pow(max(dot(N, H), 0.0), shininess) * specScale * lc;
+  }
 
   vec3 specTint = mix(vec3(1.0), base, metallic);
   vec3 diffuse = base * (1.0 - 0.9 * metallic);
 
-  vec3 colour = diffuse * (vec3(ambient) + diff * lightColor)
-              + specTint * spec * lightColor
+  vec3 colour = diffuse * (vec3(counts.y) + diffAcc)
+              + specTint * specAcc
               + emissive.rgb;
 
   outColour = offlerAlpha(vec4(pow(colour, vec3(0.4545)), base4.a));

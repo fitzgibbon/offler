@@ -1,5 +1,6 @@
-||| The scraps every example wants: an fps counter and a mesh-upload
-||| one-liner.
+||| The scraps every example wants: an fps counter and mesh-upload
+||| one-liners. Scenes receive a `status` function from their `main` --
+||| status lines are page/window chrome, not a `Platform` concept.
 module Examples.Util
 
 import Data.IORef
@@ -11,6 +12,11 @@ import Offler.Math
 import Offler.Mesh
 
 %default covering
+
+||| What a scene shows in its page footer or window title.
+public export
+Status : Type
+Status = String -> String -> IO ()
 
 public export
 record FpsCounter where
@@ -25,25 +31,40 @@ newFps = MkFpsCounter <$> newIORef 0 <*> newIORef 0.0
 ||| Frame rate, averaged over roughly half a second, into the "fps" status
 ||| slot.
 export
-reportFps : Platform p => p -> FpsCounter -> Double -> IO ()
-reportFps p fps t = do
+reportFps : Status -> FpsCounter -> Double -> IO ()
+reportFps status fps t = do
   f <- readIORef fps.frames
   since <- readIORef fps.lastReport
   if t - since >= 0.5
     then do
-      setStatus p "fps" (show (the Int (cast (cast f / (t - since) + 0.5))) ++ " fps")
+      status "fps" (show (the Int (cast (cast f / (t - since) + 0.5))) ++ " fps")
       writeIORef fps.frames 0
       writeIORef fps.lastReport t
     else writeIORef fps.frames (f + 1)
 
-||| Build and upload a primitive in one step.
+||| Build and upload a triangle-soup primitive in one step.
 export
-loadMesh : Renderer r f => r -> MeshData -> IO MeshHandle
+loadMesh : Renderer r f => r -> MeshData -> IO (MeshHandle Triangles)
 loadMesh r md = do
   buf <- uploadMesh md
   createMesh r buf.handle
 
-||| Upload world-space segments in one step.
+||| Build and upload an indexed mesh in one step.
+export
+loadIndexed : Renderer r f => r -> (List Vertex, List Int)
+           -> IO (MeshHandle Triangles)
+loadIndexed r (vs, is) = do
+  (buf, ix) <- uploadIndexed vs is
+  createMeshIndexed r buf.handle ix
+
+||| A retained line-topology mesh from world- (or object-) space segments.
+export
+loadLineMesh : Renderer r f => r -> List (V3, V3) -> IO (MeshHandle Lines)
+loadLineMesh r segs = do
+  buf <- uploadLines segs
+  createMesh r buf.handle
+
+||| Replace the gizmo overlay from segments in one step.
 export
 loadLines : Renderer r f => r -> List (V3, V3) -> IO ()
 loadLines r segs = do

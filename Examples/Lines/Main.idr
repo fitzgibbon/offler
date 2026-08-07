@@ -3,10 +3,16 @@
 module Examples.Lines.Main
 
 import Examples.Lines.Scene
+import Examples.Util
 import Offler.Gfx.Platform
 import Offler.Gfx.Renderer
 import Offler.Native.Platform
 import Offler.Native.Wgpu
+
+-- `Offler.Gfx.Renderer` re-exports `Control.Linear.LIO`, whose binds make
+-- plain IO do-blocks ambiguous here.
+%hide Control.Linear.LIO.(>>=)
+%hide Control.Linear.LIO.(>>)
 
 %default covering
 
@@ -16,4 +22,4 @@ main = do
     | Nothing => putStrLn "lines: could not open a window or start wgpu."
   p <- initNative "Lines" (ctxOf r)
   putStrLn "lines: Esc quits."
-  run r p
+  run r p (nativeStatus p)

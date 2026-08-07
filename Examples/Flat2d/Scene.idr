@@ -1,8 +1,8 @@
 ||| 2D rendering: an orthographic camera looking down -z at a court of
-||| bouncing circles and rectangles, every one unlit -- flat colour, no
-||| lighting, no perspective. Demonstrates the orthographic projection and
-||| the unlit material, which together are the 2D mode of the same 3D
-||| pipeline.
+||| bouncing circles and rectangles, every material unlit -- the 2D mode of
+||| the same 3D pipeline. Retained throughout: each sprite is a scene-graph
+||| node with its own material asset, and a frame is forty `setTransform`s
+||| and one `renderScene`.
 module Examples.Flat2d.Scene
 
 import Data.List
@@ -15,14 +15,13 @@ import Offler.Light
 import Offler.Material
 import Offler.Math
 import Offler.Mesh
+import Offler.Scene
 import Offler.Transform
 
 %hide Control.Linear.LIO.fromInteger
 
 %default covering
 
-||| Half-height of the court in world units; the width follows the window's
-||| aspect ratio, so the walls sit at a fixed height and the sides breathe.
 courtHalfH : Double
 courtHalfH = 5.0
 
@@ -53,7 +52,7 @@ record Sprite where
   constructor MkSprite
   shape : Int          -- 0 circle, 1 square, 2 tall rectangle
   size, x0, y0, vx, vy, spin : Double
-  mat : StandardMaterial
+  colour : Color
 
 mkSprite : Int -> Sprite
 mkSprite i =
@@ -65,55 +64,49 @@ mkSprite i =
     (0.7 + 2.2 * hashUnit (i * 11 + 6))
     (0.7 + 2.2 * hashUnit (i * 13 + 7))
     ((hashUnit (i * 17 + 9) - 0.5) * 3.0)
-    (unlit (hsl (hashUnit (i * 3 + 5)) 0.8 0.6))
+    (hsl (hashUnit (i * 3 + 5)) 0.8 0.6)
 
 sprites : List Sprite
 sprites = map mkSprite (range 0 39)
 
-||| Where a sprite is now: its start point carried along its velocity,
-||| folded back into the court. The court is a fixed 12 wide for motion, so
-||| the pattern is identical on every backend and aspect.
-spriteModel : Double -> Sprite -> Mat4
-spriteModel t s =
+spriteTransform : Double -> Sprite -> Transform
+spriteTransform t s =
   let hw = 6.0
       hh = courtHalfH - 0.6
       x = bounce (-hw) hw (s.x0 + s.vx * t)
       y = bounce (-hh) hh (s.y0 + s.vy * t)
-   in translate x y 0.0 `mmul` rotateZ (s.spin * t) `mmul` scaleM s.size
-
-handle : Renderer r f => r -> Event -> IO ()
-handle r Resized = resize r
-handle _ _ = pure ()
-
-drawSprites : Renderer r f => r -> (1 frame : f)
-           -> MaterialId StandardMaterial -> Double
-           -> (circle : MeshHandle) -> (square : MeshHandle) -> (tall : MeshHandle)
-           -> List Sprite -> L1 IO f
-drawSprites r fr _ _ _ _ _ [] = pure1 fr
-drawSprites r fr mid t circle square tall (s :: rest) = do
-  let m = if s.shape == 0 then circle else if s.shape == 1 then square else tall
-  fr' <- draw r fr mid m (spriteModel t s) s.mat
-  drawSprites r fr' mid t circle square tall rest
+   in withRotation (axisAngle (v3 0.0 0.0 1.0) (s.spin * t))
+        (uniformScale s.size (at (v3 x y 0.0)))
 
 frame : Renderer r f => Platform p =>
-        r -> p -> MaterialId StandardMaterial
-      -> MeshHandle -> MeshHandle -> MeshHandle -> FpsCounter
-      -> Double -> L IO ()
-frame r p mid circleM squareM tallM fps t = do
-  liftIO (pollEvents p >>= traverse_ (handle r))
+        r -> p -> Scene -> List (NodeId, Sprite) -> FpsCounter
+      -> Status -> Double -> L IO ()
+frame r p sc nodes fps status t = do
+  liftIO $ do
+    _ <- pollEvents p
+    traverse_ (\(n, s) => setTransform sc n (spriteTransform t s)) nodes
   Just fr <- beginFrame r camera lights t
     | Nothing => pure ()
-  fr1 <- drawSprites r fr mid t circleM squareM tallM sprites
+  fr1 <- renderScene r fr sc
   endFrame r fr1
 
 export
-run : Renderer r f => Platform p => r -> p -> IO ()
-run r p = do
+run : Renderer r f => Platform p => r -> p -> Status -> IO ()
+run r p status = do
   mid <- registerMaterial {m = StandardMaterial} r
   circleM <- loadMesh r (circle 0.5 48)
   squareM <- loadMesh r (rectangle 1.0 1.0)
   tallM <- loadMesh r (rectangle 0.55 1.6)
+  sc <- newScene
+  nodes <- traverse (\s => do
+      h <- addMaterial r mid (unlit s.colour)
+      let mesh = if s.shape == 0 then circleM
+                 else if s.shape == 1 then squareM else tallM
+      n <- spawn sc Nothing (spriteTransform 0.0 s) (Just (MkDrawable mesh h))
+      pure (n, s))
+    sprites
   fps <- newFps
-  setStatus p "backend" (rendererName r)
-  setStatus p "stats" (show (length sprites) ++ " sprites, orthographic")
-  runLoop p (\t => LIO.run (frame r p mid circleM squareM tallM fps t) >> reportFps p fps t)
+  status "backend" (rendererName r)
+  status "stats" (show (length sprites) ++ " sprite nodes, orthographic")
+  runLoop p $ \t =>
+    LIO.run (frame r p sc nodes fps status t) >> reportFps status fps t

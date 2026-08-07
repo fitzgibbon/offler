@@ -5,11 +5,17 @@
 module Examples.Swarm.MainGl2
 
 import Examples.Swarm.Scene
+import Examples.Util
 import Offler.Gfx.Platform
 import Offler.Gfx.Renderer
 import Offler.Web.Gl2
 import Offler.Web.Js
 import Offler.Web.Platform
+
+-- `Offler.Gfx.Renderer` re-exports `Control.Linear.LIO`, whose binds make
+-- plain IO do-blocks ambiguous here.
+%hide Control.Linear.LIO.(>>=)
+%hide Control.Linear.LIO.(>>)
 
 %default covering
 
@@ -24,4 +30,4 @@ main = do
             setText "note" "WebGPU unavailable in this browser"
   p <- initWeb "gl"
   r <- initGl2 "gl"
-  run r p
+  run r p webStatus

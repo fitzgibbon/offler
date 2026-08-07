@@ -5,10 +5,13 @@
 ||| concept that does not exist on every target -- the orrery's `canvasOf`
 ||| was one, and removing it is what let the native build exist.
 |||
-||| Draws are phased as bevy phases them: opaque and masked draws record
-||| immediately, in call order; `Blend` draws are queued and recorded at
-||| `endFrame`, sorted back to front, so transparency composites over a
-||| finished opaque scene whatever order the caller drew in.
+||| The model is retained, as bevy's is. Meshes, textures and material
+||| *assets* are created once and referenced by typed handles; a draw is a
+||| mesh handle, a material handle and a model matrix, and costs no
+||| material work at all -- the asset's uniform block went to the GPU when
+||| the asset was made. Draws are phased as bevy phases them: opaque and
+||| masked record in call order; `Blend` draws are queued and recorded at
+||| `endFrame`, sorted back to front.
 module Offler.Gfx.Renderer
 
 import public Control.Linear.LIO
@@ -25,28 +28,29 @@ import Offler.Math
 %default covering
 
 ||| A mesh the renderer has accepted, usable only with the renderer that
-||| minted it. The constructor is private; `meshHandle`/`meshIndex` exist
-||| for backend modules and are not part of the application-facing API.
+||| minted it, indexed by its primitive topology -- so the pipeline variant
+||| a draw needs is decided by the type checker, not by a runtime mesh key.
+||| The constructor is private; `meshHandle`/`meshIndex` exist for backend
+||| modules and are not part of the application-facing API.
 export
-data MeshHandle : Type where
-  MkMeshHandle : Int -> MeshHandle
+data MeshHandle : Topology -> Type where
+  MkMeshHandle : Int -> MeshHandle t
 
 ||| For backends only: wrap the index a backend's mesh table hands back.
 export %inline
-meshHandle : Int -> MeshHandle
+meshHandle : Int -> MeshHandle t
 meshHandle = MkMeshHandle
 
 ||| For backends only: the index into the backend's mesh table.
 export %inline
-meshIndex : MeshHandle -> Int
+meshIndex : MeshHandle t -> Int
 meshIndex (MkMeshHandle i) = i
 
 ||| A renderer `r` and the frame token `f` its `beginFrame` mints.
 |||
 ||| `f` is chosen by the implementation and determined by `r`, so each
 ||| backend keeps its own token type with its own private constructor:
-||| nothing outside the backend can forge one. `r` stays the first argument
-||| of every method, which is what lets the instance resolve.
+||| nothing outside the backend can forge one.
 |||
 ||| The token is **linear**. A pass must therefore be begun before it is
 ||| drawn into, ended exactly once, and never used after. Those three
@@ -59,77 +63,86 @@ interface Renderer r f | r where
   ||| Shown in the status line.
   rendererName : r -> String
 
-  ||| Upload a mesh: tightly packed position+normal+uv vertices, in
-  ||| triangles. The count travels inside `Verts`, checked against the
-  ||| array it came from, so a backend can neither be told a count the
-  ||| buffer cannot back nor be handed line vertices by mistake. Meshes are
-  ||| never freed -- create them at startup, not per frame.
-  createMesh : r -> Verts Offler.Gfx.Layout.meshFloats -> IO MeshHandle
+  ||| Upload a mesh of a topology: tightly packed vertices in that
+  ||| topology's layout (position+normal+uv for triangles, padded positions
+  ||| for lines). The count travels inside `Verts`, checked against the
+  ||| array it came from. Meshes are never freed -- create them at startup,
+  ||| not per frame.
+  createMesh : {t : Topology} -> r -> Verts t -> IO (MeshHandle t)
+
+  ||| A triangle mesh with an index list: shared vertices are stored once
+  ||| and named many times, which is how most meshes want to exist.
+  createMeshIndexed : r -> Verts Triangles -> Indices -> IO (MeshHandle Triangles)
 
   ||| Decode and upload an image -- PNG, JPEG, GIF and BMP at least, on
-  ||| every backend. The continuation receives `Nothing` when the bytes
-  ||| would not decode. Asynchronous in the browser, so it is a
-  ||| continuation everywhere; that is the shape the strictest platform
-  ||| forces, and the native path satisfies it trivially. Textures are
-  ||| never freed -- load them at startup.
-  loadTexture : r -> TextureSource -> (Maybe TextureHandle -> IO ()) -> IO ()
+  ||| every backend. The handle returns *immediately* and is valid to draw
+  ||| with at once: it reads as 1x1 white until the decode lands (the next
+  ||| frame, typically), and stays white if the bytes never decode --
+  ||| bevy's handle-before-loaded behaviour. Textures are never freed.
+  loadTexture : r -> TextureSource -> IO TextureHandle
 
   ||| Build the pipelines for a material type: bevy's
   ||| `MaterialPlugin::<M>`. The generated prologue, bind group layout and
   ||| block sizes all derive from the instance; the two erased proofs are
   ||| the compile-time bounds that the material's uniform block fits its
-  ||| 256-byte slot and its texture count fits the fixed bindings --
-  ||| discharged by reduction at the call site, so an oversized material is
-  ||| a type error there. Register each material type once, at startup.
+  ||| 256-byte slot and its texture count fits the fixed bindings.
+  ||| Pipelines are built per topology and alpha phase; the line variants
+  ||| exist only when the material declares `matLineEntry`. Register each
+  ||| material type once, at startup.
   registerMaterial : Material m => r
                   -> {auto 0 sizeOk : FitsSlot m}
                   -> {auto 0 texOk : FitsSlots m}
                   -> IO (MaterialId m)
 
-  ||| Upload the line overlay: a line list in world space, `xyz` plus one
-  ||| pad float per vertex so four of them fill a single `poke16`.
-  ||| Consecutive pairs are segments. Replaces whatever was there.
-  setLines : r -> Verts Offler.Gfx.Layout.lineFloats -> IO ()
+  ||| Create a material *asset* from a value: writes its uniform block into
+  ||| the asset's own 256-byte slot and records its textures and alpha
+  ||| phase. Drawing with the returned handle does no material work per
+  ||| draw. Assets are never freed; there are `maxObjects` slots.
+  addMaterial : Material m => r -> MaterialId m -> m -> IO (Handle m)
+
+  ||| Re-fill an existing asset's slot and bindings from a new value,
+  ||| minting a fresh handle for it (the alpha lane rides in the handle, so
+  ||| handles are immutable). The old handle keeps drawing with the
+  ||| updated data but a stale alpha phase; prefer the returned one.
+  updateMaterial : Material m => r -> Handle m -> m -> IO (Handle m)
+
+  ||| Upload the gizmo overlay: an immediate-mode line list in world space,
+  ||| offler's `bevy_gizmos`. One overlay per renderer, replaced wholesale
+  ||| -- for retained line *objects*, make a `Lines` mesh and a material
+  ||| with `matLineEntry` instead.
+  setLines : r -> Verts Lines -> IO ()
 
   ||| Drawing-buffer width over height, as it is *now*.
   aspect : r -> IO Double
 
-  ||| Match the drawing buffer to the window, rebuilding size-dependent
-  ||| resources. Safe to call when nothing has changed.
-  resize : r -> IO ()
-
   ||| Start a frame: clear to the camera's colour, and publish the
   ||| per-frame uniforms -- projection built against the current aspect,
-  ||| view from the camera's pose, the lights. `Nothing` when the surface
-  ||| texture could not be acquired, which happens during a resize -- the
-  ||| caller then has no token, so there is nothing it can draw into.
+  ||| view from the camera's pose, up to `maxLights` directional lights.
+  ||| Also where the drawing surface is re-synced to the window, so
+  ||| applications never handle resizes themselves. `Nothing` when the
+  ||| surface texture could not be acquired -- the caller then has no
+  ||| token, so there is nothing it can draw into.
   beginFrame : r -> Camera -> Lights -> (time : Double) -> L1 IO (LMaybe f)
 
-  ||| Draw one mesh with a model matrix and a material value. The
-  ||| `MaterialId` must have been minted for `m` on this renderer, which
-  ||| the phantom type holds in place: pairing it with another material
-  ||| type's value is a type error.
+  ||| Draw a mesh with a material asset and a model matrix. The handle must
+  ||| have been minted for `m` on this renderer (phantom-typed), and the
+  ||| mesh's topology must be one the material's shaders support --
+  ||| `TopoOk`, proved at compile time.
   draw : Material m => r -> (1 frame : f)
-      -> MaterialId m -> MeshHandle -> Mat4 -> m -> L1 IO f
+      -> MeshHandle t -> Handle m -> Mat4
+      -> {auto 0 ok : TopoOk t m} -> L1 IO f
 
-  ||| Draw one mesh many times under a *single* bind.
-  |||
-  ||| Not a convenience. `L IO` is a reified monad -- `Bind` is a heap node
-  ||| and `runK` interprets it -- and `runK`'s recursion is not a self tail
-  ||| call, so the JavaScript backend's trampoline does not apply and the
-  ||| stack grows once per bind. Threading the token through ten thousand
-  ||| `draw`s puts ten thousand frames on V8's stack, which overflows
-  ||| between eight and ten thousand. Looping inside one lifted `IO` action
-  ||| keeps the linear discipline at the pass boundary, where it is the
-  ||| point, and off the per-object path, where it is only cost.
-  |||
-  ||| The whole batch binds the *first* item's textures and alpha phase:
-  ||| per-item uniform data varies freely, per-item bindings do not. A
-  ||| batch is bevy's one-material-many-entities case.
+  ||| Draw one mesh many times with one material asset: model matrices
+  ||| only, since the material data is retained. Loops inside a single
+  ||| lifted IO action, so ten thousand draws cost a handful of linear
+  ||| binds rather than a stack frame each -- `runK`'s recursion is not a
+  ||| self tail call, and V8 overflows between eight and ten thousand of
+  ||| them otherwise.
   drawMany : Material m => r -> (1 frame : f)
-          -> MaterialId m -> MeshHandle -> List (Mat4, m) -> L1 IO f
+          -> MeshHandle t -> Handle m -> List Mat4
+          -> {auto 0 ok : TopoOk t m} -> L1 IO f
 
-  ||| Draw the whole line overlay in one call, one pixel wide, unlit, and
+  ||| Draw the whole gizmo overlay in one call, one pixel wide, unlit, and
   ||| blended over the meshes drawn so far. Depth is tested but not
   ||| written, so lines neither hide each other nor stipple where they
   ||| cross.
@@ -138,3 +151,24 @@ interface Renderer r f | r where
   ||| Finish the frame: record the sorted transparent phase, and submit.
   ||| Consumes the token.
   endFrame : r -> (1 frame : f) -> L IO ()
+
+||| A mesh paired with a material asset that can draw it, topology
+||| compatibility proved at construction and erased -- what a scene node
+||| holds. The existential keeps `Scene` monomorphic while nodes mix
+||| material types freely, and the proof cannot be skipped: there is no
+||| other way to build one.
+public export
+data Drawable : Type where
+  MkDrawable : Material m => {0 t : Topology}
+            -> MeshHandle t -> Handle m
+            -> {auto 0 ok : TopoOk t m} -> Drawable
+
+||| Draw a flattened scene: a list of world transforms and drawables, as
+||| `Offler.Scene.collect` produces. One linear bind per node -- scene
+||| granularity, not crowd granularity; crowds want `drawMany`.
+export
+drawAll : Renderer r f => r -> (1 frame : f) -> List (Mat4, Drawable) -> L1 IO f
+drawAll r fr [] = pure1 fr
+drawAll r fr ((model, MkDrawable mesh mat) :: rest) = do
+  fr' <- draw r fr mesh mat model
+  drawAll r fr' rest

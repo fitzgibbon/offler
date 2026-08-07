@@ -120,8 +120,14 @@ Platform NativePlatform where
 
   pollEvents p = drain p []
 
-  setStatus p slot s = do
-    ss <- readIORef p.slots
-    let ss' = (slot, s) :: filter ((/= slot) . fst) ss
-    writeIORef p.slots ss'
-    primIO (prim__setTitle p.ctx (composeTitle p.appName ss'))
+||| The window-title status line, slots composed in a fixed order.
+||| Deliberately not a `Platform` member -- it is example chrome, not a
+||| windowing concept -- so scenes take it as a plain function from their
+||| `main`.
+export
+nativeStatus : NativePlatform -> (slot : String) -> String -> IO ()
+nativeStatus p slot s = do
+  ss <- readIORef p.slots
+  let ss' = (slot, s) :: filter ((/= slot) . fst) ss
+  writeIORef p.slots ss'
+  primIO (prim__setTitle p.ctx (composeTitle p.appName ss'))

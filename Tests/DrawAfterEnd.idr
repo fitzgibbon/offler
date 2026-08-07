@@ -3,17 +3,16 @@
 -- expect: uses of linear name
 module Tests.DrawAfterEnd
 import Offler.Camera
-import Offler.Color
 import Offler.Gfx.Renderer
 import Offler.Light
 import Offler.Material
 import Offler.Math
 
 bad : Renderer r f => r -> Camera -> Lights
-   -> MaterialId StandardMaterial -> MeshHandle -> L IO ()
-bad rr cam ls mid mesh = do
+   -> MeshHandle Triangles -> Handle StandardMaterial -> L IO ()
+bad rr cam ls mesh h = do
   Just fr <- beginFrame rr cam ls 0.0
     | Nothing => pure ()
   _   <- endFrame rr fr
-  fr2 <- draw rr fr mid mesh identity (lit white)
+  fr2 <- draw rr fr mesh h identity
   endFrame rr fr2

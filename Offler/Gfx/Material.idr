@@ -124,6 +124,18 @@ interface Material m where
   matGlslVert : String
   matGlslFrag : String
 
+  ||| Whether this material can draw line-topology meshes: its WGSL provides
+  ||| a `vs_line` entry point over `LineIn`, and `matGlslLineVert` a line
+  ||| vertex stage. `TopoOk` gates line meshes on this *at compile time* --
+  ||| what bevy discovers as a runtime pipeline-specialisation error is a
+  ||| missing `So` here. Defaults to False.
+  matLineEntry : Bool
+  matLineEntry = False
+
+  ||| The GLSL line vertex stage, when `matLineEntry` is True.
+  matGlslLineVert : String
+  matGlslLineVert = ""
+
   ||| Per-draw: how this value's alpha is honoured.
   alphaMode : m -> AlphaMode
 
@@ -151,9 +163,18 @@ public export
 0 FitsSlots : (0 m : Type) -> Material m => Type
 FitsSlots m = So (the Int (cast (length (matTextureSlots {m}))) <= maxTextureSlots)
 
-||| A registered material: the pipelines and shaders for `m` on one
-||| renderer, minted by `registerMaterial`. Phantom-typed, so a draw cannot
-||| pair a value of one material type with the pipelines of another --
+||| Whether a material may draw a mesh of the given topology, decided by
+||| reduction at the draw site: triangles always; lines only when the
+||| material declares its line entry points. This is the type-level
+||| counterpart of bevy's per-topology pipeline specialisation.
+public export
+0 TopoOk : Topology -> (0 m : Type) -> Material m => Type
+TopoOk Triangles m = Unit
+TopoOk Lines m = So (matLineEntry {m})
+
+||| A registered material *type*: the pipelines and shaders for `m` on one
+||| renderer, minted by `registerMaterial`. Phantom-typed, so an asset of
+||| one material type cannot be created against the pipelines of another --
 ||| that is a type error, not a wrong image.
 export
 data MaterialId : Type -> Type where
@@ -167,6 +188,38 @@ export %inline
 materialIdIndex : MaterialId m -> Int
 materialIdIndex (MkMaterialId i) = i
 
+||| A retained material *asset*: bevy's `Handle<M>`. Minted by
+||| `addMaterial`, which uploads the material's uniform block into its own
+||| slot and records its textures backend-side -- after which drawing with
+||| the handle costs no material work per draw at all. The alpha lane data
+||| rides in the handle (written into each draw's engine block), so a
+||| handle is immutable: `updateMaterial` re-fills the same slot and mints
+||| a fresh handle.
+export
+data Handle : Type -> Type where
+  MkHandle : (asset : Int) -> (code, cutoff : Double) -> (blend : Bool) -> Handle m
+
+||| For backends only.
+export %inline
+handleFor : (asset : Int) -> AlphaMode -> Handle m
+handleFor a am = MkHandle a (alphaCode am) (alphaCutoff am) (isBlend am)
+
+export %inline
+handleAsset : Handle m -> Int
+handleAsset (MkHandle a _ _ _) = a
+
+export %inline
+handleCode : Handle m -> Double
+handleCode (MkHandle _ c _ _) = c
+
+export %inline
+handleCutoff : Handle m -> Double
+handleCutoff (MkHandle _ _ c _) = c
+
+export %inline
+handleBlend : Handle m -> Bool
+handleBlend (MkHandle _ _ _ b) = b
+
 --------------------------------------------------------------------------------
 -- What backends derive from an instance
 
@@ -176,10 +229,14 @@ materialWgsl : Material m => String
 materialWgsl =
   wgslMaterialPrologue (matFields {m}) (matTextureSlots {m}) ++ matWgsl {m}
 
-||| The full GLSL pair.
+||| The full GLSL stages.
 public export
 materialGlslVert : Material m => String
-materialGlslVert = glslMaterialVert (matFields {m}) (matGlslVert {m})
+materialGlslVert = glslMaterialVertOf Triangles (matFields {m}) (matGlslVert {m})
+
+public export
+materialGlslLineVert : Material m => String
+materialGlslLineVert = glslMaterialVertOf Lines (matFields {m}) (matGlslLineVert {m})
 
 public export
 materialGlslFrag : Material m => String
@@ -213,16 +270,14 @@ texIds v =
     (a :: b :: c :: d :: _) => (a, b, c, d)
     _ => (-1, -1, -1, -1)
 
-||| Fill a batch's object and material slots from `first`, one slot index
-||| for both buffers per item, returning the next free index. The loop is
-||| `fillWith`'s -- trampolined, bare-comparison bounds -- with this
-||| material's writer and alpha lane per item.
+||| Fill a batch's object slots from `first` -- model matrices against one
+||| retained material handle, whose lane data is constant across the batch.
+||| Material data is *not* written here: it lives in the asset's own slot,
+||| uploaded when the asset was added. The loop is `fillWith`'s --
+||| trampolined, bare-comparison bounds.
 export
-fillBatch : Material m => (obj : ObjScratch) -> (mat : ObjScratch)
-         -> (first : Int) -> List (Mat4, m) -> IO Int
-fillBatch obj mat first batch =
-  fillWith obj first batch $ \p, s => case p of
-    (model, v) => do
-      let am = alphaMode v
-      pokeObject obj s model (alphaCode am) (alphaCutoff am) 0.0 0.0
-      writeMat (matWriter mat s) v
+fillModels : (obj : ObjScratch) -> (first : Int)
+          -> (code, cutoff : Double) -> List Mat4 -> IO Int
+fillModels obj first code cutoff batch =
+  fillWith obj first batch $ \model, s =>
+    pokeObject obj s model code cutoff 0.0 0.0

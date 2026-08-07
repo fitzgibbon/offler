@@ -237,9 +237,9 @@ circle r segments =
 ||| component: the offsets inside a triangle are literals, so they are
 ||| proofs.
 export
-uploadMesh : MeshData -> IO (VertBuf Offler.Gfx.Layout.meshFloats)
+uploadMesh : MeshData -> IO (VertBuf Triangles)
 uploadMesh mesh = do
-  buf <- newVerts {stride = meshFloats} (cast (length mesh) * 3)
+  buf <- newVerts {t = Triangles} (cast (length mesh) * 3)
   go buf.arr 0 mesh
   pure buf
   where
@@ -260,15 +260,74 @@ uploadMesh mesh = do
       Nothing => pure ()   -- would overrun: stop rather than write past the end
       Just o => tri arr o t >> go arr (i + 24) rest
 
+||| Upload shared vertices and the index list naming them: how a
+||| parametric grid wants to exist -- each interior vertex stored once and
+||| named by six triangle corners.
+export
+uploadIndexed : List Vertex -> List Int -> IO (VertBuf Triangles, Indices)
+uploadIndexed verts idxs = do
+  buf <- newVerts {t = Triangles} (cast (length verts))
+  goV buf.arr 0 verts
+  ix <- newIndices (cast (length idxs))
+  goI ix 0 idxs
+  pure (buf, ix)
+  where
+    goV : F32Array cap -> Int -> List Vertex -> IO ()
+    goV arr _ [] = pure ()
+    goV arr i (MkVertex p n t :: rest) = case window {w = 8} arr i of
+      Nothing => pure ()
+      Just o => do
+        poke4 arr (sub 0 o) p.vx p.vy p.vz n.vx
+        poke4 arr (sub 4 o) n.vy n.vz t.vx t.vy
+        goV arr (i + 8) rest
+
+    goI : Indices -> Int -> List Int -> IO ()
+    goI _ _ [] = pure ()
+    goI ix i (v :: rest) = pokeIndex ix i v >> goI ix (i + 1) rest
+
+||| A parametric grid of `(nu+1) x (nv+1)` shared vertices, triangulated
+||| with two triangles per cell: the indexed form of every
+||| surface-of-revolution.
+public export
+indexedGrid : (nu, nv : Int) -> (Int -> Int -> Vertex) -> (List Vertex, List Int)
+indexedGrid nu nv f =
+  let verts = concatMap (\i => map (f i) (range 0 nv)) (range 0 nu)
+      row = nv + 1
+      idxs = concatMap (\i => concatMap (\j =>
+               let a = i * row + j
+                   b = i * row + j + 1
+                   c = (i + 1) * row + j + 1
+                   d = (i + 1) * row + j
+                in [a, b, c, a, c, d])
+               (range 0 (nv - 1)))
+               (range 0 (nu - 1))
+   in (verts, idxs)
+
+||| The torus as an indexed grid: shared vertices, proper seam UVs (the
+||| duplicated seam row carries u=1 where the first carries u=0).
+public export
+torusIndexed : (ringRadius, tubeRadius : Double) -> (ringSegments, tubeSegments : Int)
+            -> (List Vertex, List Int)
+torusIndexed rr tr ringSegments tubeSegments =
+  let nu = max 3 ringSegments
+      nv = max 3 tubeSegments
+   in indexedGrid nu nv $ \i, j =>
+        let u = cast i * (tau / cast nu)
+            v = cast j * (tau / cast nv)
+            n = MkV3 (cos u * cos v) (sin v) (sin u * cos v)
+            c = MkV3 (rr * cos u) 0.0 (rr * sin u)
+         in MkVertex (add3 c (scale3 tr n)) n
+                     (MkV2 (cast i / cast nu) (cast j / cast nv))
+
 --------------------------------------------------------------------------------
 -- Lines
 
 ||| World-space line segments, four padded floats a vertex so two vertices
 ||| fill one `poke16`, into the buffer `setLines` takes.
 export
-uploadLines : List (V3, V3) -> IO (VertBuf Offler.Gfx.Layout.lineFloats)
+uploadLines : List (V3, V3) -> IO (VertBuf Lines)
 uploadLines segs = do
-  buf <- newVerts {stride = lineFloats} (cast (length segs) * 2)
+  buf <- newVerts {t = Lines} (cast (length segs) * 2)
   go buf.arr 0 segs
   pure buf
   where

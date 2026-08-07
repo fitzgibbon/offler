@@ -1,8 +1,10 @@
-||| Line-list rendering: a spinning wireframe globe, an animated Lissajous
-||| ribbon with two glowing markers riding it, and a ground grid -- all drawn
-||| as one blended overlay in a single call, over ordinary lit meshes.
-||| Demonstrates `setLines`/`drawLines`, per-frame geometry rebuilds, and
-||| mixing the two pipelines in one pass.
+||| Line-topology meshes as first-class citizens: a retained wireframe
+||| globe and ground grid are `Lines` meshes in the scene graph, spun by
+||| their node transforms -- no per-frame geometry rebuild -- drawn through
+||| the standard material's `vs_line` entry (the type checker demands that
+||| entry exist: `TopoOk`). The animated Lissajous ribbon stays on the
+||| immediate-mode gizmo overlay, offler's `bevy_gizmos`, rebuilt each
+||| frame because its geometry genuinely changes.
 module Examples.Lines.Scene
 
 import Data.List
@@ -15,6 +17,7 @@ import Offler.Light
 import Offler.Material
 import Offler.Math
 import Offler.Mesh
+import Offler.Scene
 import Offler.Transform
 
 %hide Control.Linear.LIO.fromInteger
@@ -30,27 +33,15 @@ camera t =
 lights : Lights
 lights = defaultLights
 
-lineColor : Color
-lineColor = srgba 0.62 0.72 0.95 0.45
+||| The globe's edges, in *object* space: the node's transform spins it.
+globeSegments : List (V3, V3)
+globeSegments =
+  concatMap (\(a, b, c) =>
+      [ (a.position, b.position)
+      , (b.position, c.position)
+      , (c.position, a.position) ])
+    (sphere 1.6 2)
 
-markerMat : StandardMaterial
-markerMat = glowing (dim 2.5 (rgb 1.0 0.62 0.25))
-
-||| The globe: every triangle edge of a subdivided icosahedron, spun about +y
-||| and lifted over the grid. Shared edges appear twice, which the blend
-||| makes brighter rather than wrong.
-globe : Double -> List (V3, V3)
-globe t =
-  let q = axisAngle (v3 0.0 1.0 0.0) (t * 0.35)
-      place = \v => add3 (qRotate q (scale3 1.6 v)) (v3 0.0 2.2 0.0)
-   in concatMap (\(a, b, c) =>
-        let pa = place a.position
-            pb = place b.position
-            pc = place c.position
-         in [(pa, pb), (pb, pc), (pc, pa)])
-        (sphere 1.0 2)
-
-||| Where the ribbon sits at parameter `s`, phases drifting with time.
 ribbonPoint : Double -> Double -> V3
 ribbonPoint t s =
   v3 (4.2 * sin (2.0 * s + t * 0.31))
@@ -61,42 +52,51 @@ ribbon : Double -> List (V3, V3)
 ribbon t =
   polyline (map (\k => ribbonPoint t (cast k * (tau / 240.0))) (range 0 240))
 
-overlay : Double -> List (V3, V3)
-overlay t = gridXZ 8 1.0 ++ globe t ++ ribbon t
+markerTransform : Double -> Double -> Transform
+markerTransform t phase =
+  uniformScale 0.16 (at (ribbonPoint t (t * 0.15 + phase)))
 
-markerModel : Double -> Double -> Mat4
-markerModel t phase =
-  let pt = ribbonPoint t (t * 0.15 + phase)
-   in matOf (uniformScale 0.16 (at pt))
-
-handle : Renderer r f => r -> Event -> IO ()
-handle r Resized = resize r
-handle _ _ = pure ()
+globeTransform : Double -> Transform
+globeTransform t =
+  withRotation (axisAngle (v3 0.0 1.0 0.0) (t * 0.35)) (at (v3 0.0 2.2 0.0))
 
 frame : Renderer r f => Platform p =>
-        r -> p -> MaterialId StandardMaterial -> MeshHandle -> FpsCounter
-      -> Double -> L IO ()
-frame r p mid marker fps t = do
+        r -> p -> Scene -> (globe, m1, m2 : NodeId) -> FpsCounter
+      -> Status -> Double -> L IO ()
+frame r p sc globe m1 m2 fps status t = do
   liftIO $ do
-    pollEvents p >>= traverse_ (handle r)
-    -- Rebuilt on the CPU every frame and re-uploaded, *outside* the pass:
-    -- replacing the overlay buffer mid-pass would destroy a buffer the
-    -- recorded commands still name.
-    loadLines r (overlay t)
+    _ <- pollEvents p
+    setTransform sc globe (globeTransform t)
+    setTransform sc m1 (markerTransform t 0.0)
+    setTransform sc m2 (markerTransform t 3.1)
+    -- The gizmo overlay is the one thing rebuilt per frame: its geometry
+    -- actually changes. Re-uploaded outside the pass.
+    loadLines r (ribbon t)
   Just fr <- beginFrame r (camera t) lights t
     | Nothing => pure ()
-  fr1 <- draw r fr mid marker (markerModel t 0.0) markerMat
-  fr2 <- draw r fr1 mid marker (markerModel t 3.1) markerMat
+  fr1 <- renderScene r fr sc
   -- After the meshes, so the blend has something solid to sit over.
-  fr3 <- drawLines r fr2 lineColor
-  endFrame r fr3
+  fr2 <- drawLines r fr1 (srgba 1.0 0.72 0.35 0.6)
+  endFrame r fr2
 
 export
-run : Renderer r f => Platform p => r -> p -> IO ()
-run r p = do
+run : Renderer r f => Platform p => r -> p -> Status -> IO ()
+run r p status = do
   mid <- registerMaterial {m = StandardMaterial} r
-  marker <- loadMesh r (sphere 1.0 2)
+  -- Retained line meshes: geometry uploaded once, animated by transform.
+  globeMesh <- loadLineMesh r globeSegments
+  gridMesh <- loadLineMesh r (gridXZ 8 1.0)
+  markerMesh <- loadMesh r (sphere 1.0 2)
+  lineH <- addMaterial r mid
+             (withAlpha Blend (unlit (srgba 0.62 0.72 0.95 0.45)))
+  markerH <- addMaterial r mid (glowing (dim 2.5 (rgb 1.0 0.62 0.25)))
+  sc <- newScene
+  _ <- spawn sc Nothing neutral (Just (MkDrawable gridMesh lineH))
+  globe <- spawn sc Nothing (globeTransform 0.0) (Just (MkDrawable globeMesh lineH))
+  m1 <- spawn sc Nothing (markerTransform 0.0 0.0) (Just (MkDrawable markerMesh markerH))
+  m2 <- spawn sc Nothing (markerTransform 0.0 3.1) (Just (MkDrawable markerMesh markerH))
   fps <- newFps
-  setStatus p "backend" (rendererName r)
-  setStatus p "stats" (show (length (overlay 0.0)) ++ " segments/frame")
-  runLoop p (\t => LIO.run (frame r p mid marker fps t) >> reportFps p fps t)
+  status "backend" (rendererName r)
+  status "stats" (show (length globeSegments) ++ " retained segments + gizmo ribbon")
+  runLoop p $ \t =>
+    LIO.run (frame r p sc globe m1 m2 fps status t) >> reportFps status fps t

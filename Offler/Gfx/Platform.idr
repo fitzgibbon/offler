@@ -48,7 +48,3 @@ interface Platform p where
   ||| natively this pumps the event loop. Called once per frame, on the frame
   ||| thread, so no state changes from a callback.
   pollEvents : p -> IO (List Event)
-
-  ||| Show a short line of text: a DOM element by id, or a field of the
-  ||| window title.
-  setStatus : p -> (slot : String) -> String -> IO ()
