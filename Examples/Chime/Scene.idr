@@ -223,9 +223,13 @@ onPick au snd w t (PickOver _ i _) = writeIORef w.cursor (cast i)
 onPick au snd w t (PickDown _ LeftButton i _) = strike au snd w t i
 onPick _ _ _ _ _ = pure ()
 
+||| Each bar carries two assets, made once: its normal self and an
+||| emissive-lifted highlight. Which one draws is a pure function of the
+||| cursor, so highlighting costs no material writes -- the same reason
+||| the renderer retains materials at all.
 frame : Renderer r f => Platform p => Audio au =>
         r -> p -> au -> World -> Picker Int
-     -> List (Int, Drawable) -> MeshHandle Triangles -> Handle StandardMaterial
+     -> List (Int, Drawable, Drawable) -> MeshHandle Triangles -> Handle StandardMaterial
      -> SoundHandle -> Status -> Double -> L IO ()
 frame r p au w picker bars ball markH snd status t = do
   cur <- liftIO $ do
@@ -239,8 +243,8 @@ frame r p au w picker bars ball markH snd status t = do
     rs <- readIORef w.ripples
     -- The bars as pick targets: a unit-sphere bound under exactly the
     -- matrix each bar draws with this frame.
-    let targets = map (\(i, _) => target i (barModel t rs i)
-                                    (BoundSphere zero3 1.0)) bars
+    let targets = map (\(i, _, _) => target i (barModel t rs i)
+                                       (BoundSphere zero3 1.0)) bars
     locked <- readIORef w.locked
     sfc <- surfaceSize p
     -- Locked, the pointer has no position: the picker sees no events and
@@ -252,7 +256,11 @@ frame r p au w picker bars ball markH snd status t = do
   rs <- liftIO (readIORef w.ripples)
   Just fr <- beginFrame r camera lights t
     | Nothing => pure ()
-  fr1 <- drawAll r fr (map (\(i, d) => (barModel t rs i, d)) bars)
+  -- The bar the cursor is on glows before it is struck, however the
+  -- cursor got there: hover, arrows, stick or locked deltas.
+  let curBar = the Int (cast cur)
+  fr1 <- drawAll r fr (map (\(i, d, dh) =>
+           (barModel t rs i, if i == curBar then dh else d)) bars)
   -- The highlight hovers over the (continuous) cursor position.
   fr2 <- draw r fr1 ball markH
            (translate (barX 0 + cur * 1.15) (1.35 + 0.1 * sin (t * 3.0)) 0.0
@@ -267,9 +275,13 @@ run r p au status = do
   mid <- registerMaterial {m = StandardMaterial} r
   ball <- loadMesh r (sphere 1.0 2)
   bars <- traverse (\i => do
+            let hue = barHue i
             h <- addMaterial r mid
-                   (withRoughness 0.35 (lit (hsl (barHue i) 0.68 0.55)))
-            pure (i, MkDrawable ball h))
+                   (withRoughness 0.35 (lit (hsl hue 0.68 0.55)))
+            hi <- addMaterial r mid
+                    ({ emissive := dim 0.8 (hsl hue 0.8 0.6) }
+                     (withRoughness 0.35 (lit (hsl hue 0.68 0.6))))
+            pure (i, MkDrawable ball h, MkDrawable ball hi))
           (range 0 (barCount - 1))
   markH <- addMaterial r mid (glowing (dim 1.7 (rgb 1.0 0.85 0.4)))
   snd <- loadSound au (SoundPcm plinkRate plink)
