@@ -204,11 +204,21 @@ toggle there. The only checks that run are:
   mesh uploads.
 - The per-object hot path — =drawMany='s batch fill — goes through
   =pokeObjects= instead, whose bound is a bare comparison inside the module
-  that owns the invariant: the same test, exactly once in the library, with
-  its result moved from a heap value to a branch. That recovers the
-  measured §8.1 cost without weakening anything a caller can reach; =slot=
-  remains the only way in from outside, and =make check= still proves it
-  (=Tests/ForgedSlot.idr=).
+  that owns the invariant. The test still runs *for every object*: what
+  moved is its form (a branch instead of an allocated =Maybe=) and its
+  justification, not its frequency or its accuracy. =0 <= i < maxObjects=
+  is equivalent to the window test =slot= performs, because the scratch is
+  allocated as exactly =objFloats * maxObjects= floats; slot bases step by
+  exactly =objFloats=, so in-range slots are disjoint; and the writes
+  *inside* a slot remain proof-bounded by the erased =sub= offsets. What is
+  genuinely weaker: the tie between the test and the construction is now
+  module-level reasoning over ten private lines (=slotAt= asserts with
+  =unsafeAt=) rather than a type — which is why the loop is private,
+  single, and run at exactly the cap by =Checks/StackCheck.idr= on every
+  =make check=. Proving the tie instead would need multiplication
+  monotonicity for =Int=, which not even contrib's =Data.Int.Order=
+  postulates. =slot= remains the only way in from outside, and =make
+  check= still proves it (=Tests/ForgedSlot.idr=).
 
 On top of that sits the switch:
 
