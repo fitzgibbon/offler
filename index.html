@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>offler &middot; examples</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0; min-height: 100vh; display: grid; place-content: center;
+    background: #05060a; color: #c9d1de;
+    font: 15px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  main { padding: 2rem; max-width: 60ch; }
+  h1 { font-size: 1.3rem; margin: 0 0 0.2rem; }
+  h1 span { color: #6d7688; font-weight: 400; }
+  p { color: #7d8798; margin: 0.3rem 0 1.4rem; }
+  ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.7rem; }
+  a {
+    display: block; padding: 0.8rem 1rem; border: 1px solid #2b3446;
+    border-radius: 8px; color: #dfe6f2; text-decoration: none;
+    background: #0d1017;
+  }
+  a:hover { background: #161b26; border-color: #3a465c; }
+  a b { display: block; }
+  a small { color: #7d8798; }
+  code { font-family: ui-monospace, Menlo, monospace; color: #9fb0c8; }
+</style>
+</head>
+<body>
+<main>
+  <h1>offler <span>&mdash; a unified graphics and windowing library for Idris&nbsp;2</span></h1>
+  <p>Each example runs on WebGL2 and WebGPU from the same source, and the
+     same source also builds a native binary on SDL3 + wgpu-native.
+     Build the bundles with <code>make web</code>.</p>
+  <ul>
+    <li><a href="shapes.html"><b>Shapes</b><small>rotating lit primitives — bevy's 3d_shapes</small></a></li>
+    <li><a href="lines.html"><b>Lines</b><small>wireframe globe, Lissajous ribbon, grid — line-list rendering</small></a></li>
+    <li><a href="swarm.html"><b>Swarm</b><small>10&thinsp;000 batched instances around a glowing core</small></a></li>
+    <li><a href="flat2d.html"><b>Flat 2D</b><small>orthographic, unlit — the 2D mode</small></a></li>
+  </ul>
+</main>
+</body>
+</html>

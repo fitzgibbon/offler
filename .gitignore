@@ -1,0 +1,5 @@
+build/
+Offler/Shaders.idr
+Offler/Gfx/Config.idr
+*.so
+result

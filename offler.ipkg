@@ -1,0 +1,34 @@
+package offler
+version = 0.1.0
+authors = "Niall FitzGibbon"
+brief = "A unified graphics and windowing library: WebGL2 and WebGPU in the browser, SDL3 + wgpu-native on the desktop, one Idris API over all three."
+
+sourcedir = "."
+depends = base >= 0.7.0, linear
+
+modules = Offler.Camera
+        , Offler.Color
+        , Offler.Gfx.Array
+        , Offler.Gfx.Config
+        , Offler.Gfx.Layout
+        , Offler.Gfx.Platform
+        , Offler.Gfx.Renderer
+        , Offler.Gfx.Uniform
+        , Offler.Light
+        , Offler.Material
+        , Offler.Math
+        , Offler.Mesh
+        , Offler.Native.Platform
+        , Offler.Native.Wgpu
+        , Offler.Shaders
+        , Offler.Transform
+        , Offler.Web.Gl2
+        , Offler.Web.Gpu
+        , Offler.Web.Js
+        , Offler.Web.Platform
+
+-- No build hooks. Offler/Shaders.idr and the C shim are the Makefile's,
+-- which is why Shaders can appear in the list above: a prebuild hook could
+-- not put it there, because Idris resolves the module list before running
+-- one. Run `make lib` (or any example target) rather than building this
+-- .ipkg before the shaders have been embedded.

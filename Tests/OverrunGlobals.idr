@@ -1,0 +1,10 @@
+||| Must NOT compile: the frame globals are 44 floats, so a mat4 written at
+||| offset 32 would run four floats past the end. `here` demands the bound.
+-- expect: Can't find an implementation for So
+module Tests.OverrunGlobals
+import Offler.Gfx.Array
+import Offler.Gfx.Uniform
+import Offler.Math
+
+bad : GlobalScratch -> Mat4 -> IO ()
+bad a m = pokeMat a (here 32) m
