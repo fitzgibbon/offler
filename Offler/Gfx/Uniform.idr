@@ -10,6 +10,7 @@
 ||| through two independent dynamic offsets.
 module Offler.Gfx.Uniform
 
+import Data.IORef
 import Data.List
 import Offler.Camera
 import Offler.Color
@@ -92,6 +93,87 @@ pokeObject : ObjScratch -> Slot -> Mat4
 pokeObject a (MkSlot o) model x y z w = do
   pokeMat a (sub 0 o) model
   poke4 a (sub objLaneFloat o) x y z w
+
+--------------------------------------------------------------------------------
+-- Paged slots
+
+||| Slots without a global ceiling: `maxObjects`-slot pages, grown on
+||| demand, so `maxObjects` bounds a *page*, not a frame. The CPU pages
+||| live here; each backend grows its GPU buffers (and, on the WebGPU
+||| flavours, per-page bind groups) to match, lazily, keyed by the same
+||| page arithmetic: global slot `i` is slot `i mod maxObjects` of page
+||| `i div maxObjects`.
+export
+record Paged where
+  constructor MkPaged
+  pagesRef : IORef (List ObjScratch)
+
+export
+covering
+newPaged : IO Paged
+newPaged = do
+  p0 <- newObjScratch
+  ref <- newIORef [p0]
+  pure (MkPaged ref)
+
+covering
+growTo : IORef (List ObjScratch) -> Int -> IO (List ObjScratch)
+growTo ref n = do
+  ps <- readIORef ref
+  let have = the Int (cast (length ps))
+  if have >= n
+    then pure ps
+    else do
+      more <- mkMore (n - have)
+      let ps' = ps ++ more
+      writeIORef ref ps'
+      pure ps'
+  where
+    covering
+    mkMore : Int -> IO (List ObjScratch)
+    mkMore k =
+      if k <= 0 then pure []
+      else do
+        a <- newObjScratch
+        rest <- mkMore (k - 1)
+        pure (a :: rest)
+
+nth : Int -> List a -> Maybe a
+nth _ [] = Nothing
+nth i (x :: xs) = if i <= 0 then Just x else nth (i - 1) xs
+
+||| The page index, page scratch and checked local slot for global slot
+||| `i`, growing the pages to reach it. The local index is `i mod
+||| maxObjects`, so the `slot` test cannot fail for non-negative `i` --
+||| the `Maybe` survives for negative input alone.
+export
+covering
+pageSlot : Paged -> (i : Int) -> IO (Maybe (Int, ObjScratch, Slot))
+pageSlot pg i =
+  if i < 0 then pure Nothing
+  else do
+    let p = i `div` maxObjects
+        local = i `mod` maxObjects
+    ps <- growTo pg.pagesRef (p + 1)
+    pure $ do
+      a <- nth p ps
+      s <- slot a local
+      pure (p, a, s)
+
+||| The pages holding slots `[0, count)`, each with the float prefix it
+||| actually used -- what `endFrame` uploads, one write per touched page.
+export
+usedPages : Paged -> (count : Int) -> IO (List (Int, ObjScratch, Int))
+usedPages pg count = do
+  ps <- readIORef pg.pagesRef
+  pure (go 0 count ps)
+  where
+    go : Int -> Int -> List ObjScratch -> List (Int, ObjScratch, Int)
+    go _ _ [] = []
+    go p remaining (a :: rest) =
+      if remaining <= 0 then []
+      else let n = min remaining maxObjects
+            in (p, a, n * objFloats) :: go (p + 1) (remaining - n) rest
 
 --------------------------------------------------------------------------------
 -- The material writer

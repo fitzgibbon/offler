@@ -9,6 +9,7 @@ in vec3 vNormal;
 in vec3 vWorld;
 in vec3 vObj;
 in vec2 vUv;
+in vec4 vICol;
 out vec4 outColour;
 
 float hash(vec3 p) {
@@ -53,7 +54,7 @@ void main() {
   // The default binding is the renderer's 1x1 white, so an unmapped
   // material multiplies by one.
   vec4 texel = texture(t_base_color, vUv);
-  vec4 base4 = baseColor * texel;
+  vec4 base4 = baseColor * texel * vICol;
   vec3 base = base4.rgb * patternFactor();
 
   // Unlit: the (patterned, textured) base colour exactly.

@@ -9,6 +9,7 @@
 module Offler.Native.Wgpu
 
 import Data.IORef
+import Data.List
 import Offler.Camera
 import Offler.Color
 import Offler.Gfx.Array
@@ -33,10 +34,20 @@ import Offler.Transform
 ||| the proved sizes.
 %foreign "C:offler_init,liboffler"
 prim__init : String -> String -> String -> String -> Int
-          -> String -> Int -> Int -> Int -> Int -> Int -> PrimIO AnyPtr
+          -> String -> Int -> String -> Int
+          -> Int -> Int -> Int -> Int -> PrimIO AnyPtr
 
 %foreign "C:offler_register_material,liboffler"
-prim__register : AnyPtr -> String -> String -> Int -> PrimIO Int
+prim__register : AnyPtr -> String -> String -> Int -> Int -> PrimIO Int
+
+%foreign "C:offler_create_instances,liboffler"
+prim__createInstances : AnyPtr -> PrimIO Int
+
+%foreign "C:offler_write_instances,liboffler"
+prim__writeInstances : AnyPtr -> Int -> AnyPtr -> Int -> Int -> PrimIO ()
+
+%foreign "C:offler_draw_instanced,liboffler"
+prim__drawInstanced : AnyPtr -> Int -> Int -> Int -> Int -> Int -> PrimIO ()
 
 %foreign "C:offler_add_asset,liboffler"
 prim__addAsset : AnyPtr -> Int -> Int -> Int -> Int -> Int -> Int -> PrimIO Int
@@ -45,7 +56,10 @@ prim__addAsset : AnyPtr -> Int -> Int -> Int -> Int -> Int -> Int -> PrimIO Int
 prim__updateAsset : AnyPtr -> Int -> Int -> Int -> Int -> Int -> PrimIO ()
 
 %foreign "C:offler_upload_mat_slot,liboffler"
-prim__uploadMatSlot : AnyPtr -> AnyPtr -> Int -> PrimIO ()
+prim__uploadMatSlot : AnyPtr -> AnyPtr -> Int -> Int -> PrimIO ()
+
+%foreign "C:offler_upload_obj_page,liboffler"
+prim__uploadObjPage : AnyPtr -> Int -> AnyPtr -> Int -> PrimIO ()
 
 %foreign "C:offler_texture_file,liboffler"
 prim__textureFile : AnyPtr -> String -> PrimIO Int
@@ -62,8 +76,11 @@ prim__createMesh : AnyPtr -> AnyPtr -> Int -> Int -> PrimIO Int
 %foreign "C:offler_create_mesh_indexed,liboffler"
 prim__createMeshIndexed : AnyPtr -> AnyPtr -> Int -> AnyPtr -> Int -> PrimIO Int
 
+%foreign "C:offler_mesh_gen,liboffler"
+prim__meshGen : AnyPtr -> Int -> PrimIO Int
+
 %foreign "C:offler_free_mesh,liboffler"
-prim__freeMesh : AnyPtr -> Int -> PrimIO ()
+prim__freeMesh : AnyPtr -> Int -> Int -> PrimIO ()
 
 %foreign "C:offler_set_lines,liboffler"
 prim__setLines : AnyPtr -> AnyPtr -> Int -> Int -> PrimIO ()
@@ -75,24 +92,27 @@ prim__drawLines : AnyPtr -> Int -> PrimIO ()
 prim__begin : AnyPtr -> AnyPtr -> Double -> Double -> Double -> PrimIO Int
 
 %foreign "C:offler_draw,liboffler"
-prim__draw : AnyPtr -> Int -> Int -> Int -> Int -> Double -> PrimIO ()
+prim__draw : AnyPtr -> Int -> Int -> Int -> Int -> Int -> Double -> PrimIO ()
 
 %foreign "C:offler_draw_slices,liboffler"
-prim__drawSlices : AnyPtr -> Int -> Int -> Int -> Int -> Int -> Double -> PrimIO ()
+prim__drawSlices : AnyPtr -> Int -> Int -> Int -> Int -> Int -> Int -> Double -> PrimIO ()
 
 %foreign "C:offler_end,liboffler"
-prim__end : AnyPtr -> AnyPtr -> Int -> PrimIO ()
+prim__end : AnyPtr -> PrimIO ()
 
 public export
 record Wgpu where
   constructor MkWgpu
   ctx : AnyPtr
   globalScratch : GlobalScratch
-  objScratch, matScratch : ObjScratch
+  ||| The paged per-draw engine blocks: no frame draw ceiling.
+  objScratch : Paged
+  ||| One-page staging for material slots.
+  matScratch : ObjScratch
   ||| Eye and forward at `beginFrame`, for sorting the transparent phase.
   eyeFwd : IORef (V3, V3)
-  ||| Material assets minted so far: the next free slot of the material
-  ||| buffer.
+  ||| Material assets minted so far: the next free slot of the paged
+  ||| material buffers.
   assetCount : IORef Int
 
 ||| The window and the device are one object on this side, so the platform
@@ -110,12 +130,13 @@ initWgpu title = do
   c <- primIO (prim__init title (wgslLinePrologue ++ lineWgslSrc)
                           lineBindSpec lineVertexSpec lineStride
                           meshVertexSpec meshStride
+                          instanceSpec instanceStride
                           globalSize objSize objStride maxObjects)
   if prim__nullAnyPtr c /= 0
     then pure Nothing
     else do
       gs <- newGlobalScratch
-      os <- newObjScratch
+      os <- newPaged
       ms <- newObjScratch
       ef <- newIORef (zero3, MkV3 0.0 0.0 (-1.0))
       ac <- newIORef 0
@@ -133,30 +154,35 @@ depthOf r model = do
   (eye, fwd) <- readIORef r.eyeFwd
   pure (dot3 fwd (sub3 (MkV3 model.m12 model.m13 model.m14) eye))
 
-||| Write a material value into an asset slot and upload it.
+||| Write a material value into an asset slot and upload it. The staging
+||| slot is `i mod maxObjects`; the upload lands on slot `i` of the paged
+||| material buffers.
 fillAsset : Material m => Wgpu -> (slotIdx : Int) -> m -> IO ()
 fillAsset r i v =
-  case slot r.matScratch i of
+  case slot r.matScratch (i `mod` maxObjects) of
     Nothing => pure ()
     Just s => do
       writeMat (matWriter r.matScratch s) v
-      primIO (prim__uploadMatSlot r.ctx (raw r.matScratch) (slotIndex s))
+      primIO (prim__uploadMatSlot r.ctx (raw r.matScratch) (slotIndex s) i)
 
 export
 Renderer Wgpu WgpuFrame where
   rendererName _ = "wgpu"
 
-  createMesh {t} r vs =
-    meshHandle <$> primIO (prim__createMesh r.ctx (vertsRaw vs) (vertsCount vs)
-                                            (topoCode t))
+  createMesh {t} r vs = do
+    i <- primIO (prim__createMesh r.ctx (vertsRaw vs) (vertsCount vs)
+                                  (topoCode t))
+    g <- primIO (prim__meshGen r.ctx i)
+    pure (meshHandle i g)
 
-  createMeshIndexed r vs ix =
-    meshHandle <$> primIO (prim__createMeshIndexed r.ctx (vertsRaw vs)
-                                                   (vertsCount vs)
-                                                   (indicesRaw ix)
-                                                   (indicesCount ix))
+  createMeshIndexed r vs ix = do
+    i <- primIO (prim__createMeshIndexed r.ctx (vertsRaw vs) (vertsCount vs)
+                                         (indicesRaw ix) (indicesCount ix))
+    g <- primIO (prim__meshGen r.ctx i)
+    pure (meshHandle i g)
 
-  freeMesh r mesh = primIO (prim__freeMesh r.ctx (meshIndex mesh))
+  freeMesh r mesh =
+    primIO (prim__freeMesh r.ctx (meshIndex mesh) (meshGen mesh))
 
   loadTexture r src = do
     i <- case src of
@@ -166,7 +192,8 @@ Renderer Wgpu WgpuFrame where
 
   registerMaterial r {m} = do
     i <- primIO (prim__register r.ctx (materialWgsl {m}) (materialSpec {m})
-                                (if matLineEntry {m} then 1 else 0))
+                                (if matLineEntry {m} then 1 else 0)
+                                (if matInstEntry {m} then 1 else 0))
     pure (materialId i)
 
   addMaterial r mid v = do
@@ -203,39 +230,76 @@ Renderer Wgpu WgpuFrame where
       then pure1 (Just (MkWgpuFrame 0))
       else pure1 Nothing
 
-  draw r (MkWgpuFrame i) mesh h model =
-    case slot r.objScratch i of
-      Nothing => pure1 (MkWgpuFrame i)
-      Just s => do
-        liftIO $ do
-          pokeObject r.objScratch s model (handleCode h) (handleCutoff h) 0.0 0.0
+  draw r (MkWgpuFrame i) mesh h model = do
+    liftIO $ do
+      mp <- pageSlot r.objScratch i
+      case mp of
+        Nothing => pure ()
+        Just (_, arr, s) => do
+          pokeObject arr s model (handleCode h) (handleCutoff h) 0.0 0.0
           d <- if handleBlend h then depthOf r model else pure 0.0
           primIO (prim__draw r.ctx (handleAsset h) (meshIndex mesh)
-                             (slotIndex s) (if handleBlend h then 1 else 0) d)
-        pure1 (MkWgpuFrame (i + 1))
+                             (meshGen mesh) i
+                             (if handleBlend h then 1 else 0) d)
+    pure1 (MkWgpuFrame (i + 1))
 
+  -- Chunked at page boundaries, so each foreign call's slot run shares a
+  -- page (and therefore a bind group).
   drawMany r (MkWgpuFrame i) mesh h models = do
-    i' <- liftIO $ case models of
-      [] => pure i
-      (mdl0 :: _) => do
-        filled <- fillModels r.objScratch i (handleCode h) (handleCutoff h) models
-        let count = filled - i
-        when (count > 0) $ do
-          d <- if handleBlend h then depthOf r mdl0 else pure 0.0
-          primIO (prim__drawSlices r.ctx (handleAsset h) (meshIndex mesh)
-                                   i count (if handleBlend h then 1 else 0) d)
-        pure filled
+    i' <- liftIO (goChunks i models)
     pure1 (MkWgpuFrame i')
+    where
+      goChunks : Int -> List Mat4 -> IO Int
+      goChunks i [] = pure i
+      goChunks i ms@(m0 :: _) = do
+        mp <- pageSlot r.objScratch i
+        case mp of
+          Nothing => pure i
+          Just (_, arr, _) => do
+            let local = i `mod` maxObjects
+                (chunk, rest) = splitAt (cast (maxObjects - local)) ms
+            filled <- fillModels arr local (handleCode h) (handleCutoff h) chunk
+            let count = filled - local
+            if count <= 0 then pure i else do
+              d <- if handleBlend h then depthOf r m0 else pure 0.0
+              primIO (prim__drawSlices r.ctx (handleAsset h) (meshIndex mesh)
+                                       (meshGen mesh) i count
+                                       (if handleBlend h then 1 else 0) d)
+              goChunks (i + count) rest
 
-  drawGizmos r (MkWgpuFrame i) =
-    case slot r.objScratch i of
-      Nothing => pure1 (MkWgpuFrame i)
-      Just s => do
-        liftIO $ do
+  createInstances r = instanceHandle <$> primIO (prim__createInstances r.ctx)
+
+  writeInstances r ih sl =
+    primIO (prim__writeInstances r.ctx (instanceIndex ih) (instRaw sl)
+                                 (instCount sl * instanceFloats)
+                                 (instCount sl))
+
+  drawInstanced r (MkWgpuFrame i) mesh h ih model = do
+    liftIO $ do
+      mp <- pageSlot r.objScratch i
+      case mp of
+        Nothing => pure ()
+        Just (_, arr, s) => do
+          pokeObject arr s model (handleCode h) (handleCutoff h) 0.0 0.0
+          primIO (prim__drawInstanced r.ctx (handleAsset h)
+                                      (meshIndex mesh) (meshGen mesh)
+                                      i (instanceIndex ih))
+    pure1 (MkWgpuFrame (i + 1))
+
+  drawGizmos r (MkWgpuFrame i) = do
+    liftIO $ do
+      mp <- pageSlot r.objScratch i
+      case mp of
+        Nothing => pure ()
+        Just (_, arr, s) => do
           -- Identity model, white lane: colours are per vertex.
-          pokeObject r.objScratch s identity 1.0 1.0 1.0 1.0
-          primIO (prim__drawLines r.ctx (slotIndex s))
-        pure1 (MkWgpuFrame (i + 1))
+          pokeObject arr s identity 1.0 1.0 1.0 1.0
+          primIO (prim__drawLines r.ctx i)
+    pure1 (MkWgpuFrame (i + 1))
 
-  endFrame r (MkWgpuFrame i) =
-    liftIO (primIO (prim__end r.ctx (raw r.objScratch) (i * objFloats)))
+  endFrame r (MkWgpuFrame i) = liftIO $ do
+    pages <- usedPages r.objScratch i
+    traverse_ (\(pg, arr, floats) =>
+                 primIO (prim__uploadObjPage r.ctx pg (raw arr) floats))
+              pages
+    primIO (prim__end r.ctx)

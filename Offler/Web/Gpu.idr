@@ -10,6 +10,7 @@
 module Offler.Web.Gpu
 
 import Data.IORef
+import Data.List
 import Offler.Camera
 import Offler.Color
 import Offler.Gfx.Array
@@ -47,36 +48,49 @@ prim__aspect : JSVal -> PrimIO Double
 ||| bind-group cache `bgFor`, and the draw executor `exec` -- defined once
 ||| here because each `%foreign` lambda is otherwise its own world.
 |||
+||| The object and material buffers are *paged*: `maxObjects` slots each,
+||| created by `pageOf` the first time a slot on a page is drawn, so
+||| neither the frame's draw count nor the asset count has a ceiling.
+||| A bind group names its buffers, so the cache keys include the object
+||| page (per draw) and the asset's material page (fixed); per-asset
+||| lookups are an array index on the object page. Meshes are a free-list
+||| table with generations: `exec` skips a draw whose handle generation
+||| does not match the entry.
+|||
 ||| Texture usage bits differ from buffer usage bits: COPY_DST is 2 for
 ||| textures (8 for buffers); white is TEXTURE_BINDING(4)|COPY_DST(2) = 6.
 ||| `texGen` counts decode completions: asset bind groups rebuild lazily
 ||| when it moves, which is how a texture that decodes after the assets
 ||| referencing it were made still reaches them.
-%foreign "javascript:lambda:(dev,gbuf,obuf,mbuf,objSize)=>{const rt={dev:dev,gbuf:gbuf,obuf:obuf,mbuf:mbuf,objSize:objSize,meshes:[],texs:[],texGen:0,mats:[],assets:[],pend:[],lineBuf:null,lineCount:0};dev.addEventListener('uncapturederror',(e)=>{const el=document.getElementById('error');if(el){el.style.display='block';el.textContent='WebGPU: '+e.error.message}});rt.sampler=dev.createSampler({magFilter:'linear',minFilter:'linear',addressModeU:'repeat',addressModeV:'repeat'});const w=dev.createTexture({size:[1,1],format:'rgba8unorm',usage:6});dev.queue.writeTexture({texture:w},new Uint8Array([255,255,255,255]),{},[1,1]);rt.white=w.createView();rt.bgFor=(M,t0,t1,t2,t3)=>{const key=rt.texGen+':'+t0+','+t1+','+t2+','+t3;let bg=M.bgs[key];if(!bg){const es=[{binding:0,resource:{buffer:rt.gbuf}},{binding:1,resource:{buffer:rt.obuf,size:rt.objSize}},{binding:2,resource:{buffer:rt.mbuf,size:M.matSize}}];const ts=[t0,t1,t2,t3];for(let i=0;i<M.texCount;i++){es.push({binding:3+2*i,resource:ts[i]>=0&&rt.texs[ts[i]]?rt.texs[ts[i]]:rt.white});es.push({binding:4+2*i,resource:rt.sampler})}bg=rt.dev.createBindGroup({layout:M.pl.getBindGroupLayout(0),entries:es});M.bgs[key]=bg}return bg};rt.exec=(pass,ai,mi,slot,blend)=>{const A=rt.assets[ai];const M=rt.mats[A.mat];const mm=rt.meshes[mi];if(!mm)return;if(A.gen!==rt.texGen){A.bg=rt.bgFor(M,A.t0,A.t1,A.t2,A.t3);A.gen=rt.texGen}const pipe=mm.topo===1?(blend?M.lplb:M.lpl):(blend?M.plb:M.pl);if(!pipe)return;pass.p.setPipeline(pipe);pass.p.setVertexBuffer(0,mm.b);pass.p.setBindGroup(0,A.bg,[slot*256,A.slot*256]);if(mm.ib){pass.p.setIndexBuffer(mm.ib,'uint32');pass.p.drawIndexed(mm.icount)}else{pass.p.draw(mm.n)}};return rt}"
-prim__initRt : JSVal -> JSVal -> JSVal -> JSVal -> Int -> PrimIO JSVal
+%foreign "javascript:lambda:(dev,gbuf,objSize,stride,maxN)=>{const rt={dev:dev,gbuf:gbuf,objSize:objSize,stride:stride,maxN:maxN,obufs:[],mbufs:[],meshes:[],freeMeshes:[],insts:[],texs:[],texGen:0,mats:[],assets:[],pend:[],lineBuf:null,lineCount:0};dev.addEventListener('uncapturederror',(e)=>{const el=document.getElementById('error');if(el){el.style.display='block';el.textContent='WebGPU: '+e.error.message}});rt.sampler=dev.createSampler({magFilter:'linear',minFilter:'linear',addressModeU:'repeat',addressModeV:'repeat'});const w=dev.createTexture({size:[1,1],format:'rgba8unorm',usage:6});dev.queue.writeTexture({texture:w},new Uint8Array([255,255,255,255]),{},[1,1]);rt.white=w.createView();rt.pageOf=(arr,p)=>{while(arr.length<=p)arr.push(dev.createBuffer({size:stride*maxN,usage:72}));return arr[p]};rt.bgFor=(M,t0,t1,t2,t3,op,mp)=>{const key=rt.texGen+':'+t0+','+t1+','+t2+','+t3+':'+op+':'+mp;let bg=M.bgs[key];if(!bg){const es=[{binding:0,resource:{buffer:rt.gbuf}},{binding:1,resource:{buffer:rt.pageOf(rt.obufs,op),size:rt.objSize}},{binding:2,resource:{buffer:rt.pageOf(rt.mbufs,mp),size:M.matSize}}];const ts=[t0,t1,t2,t3];for(let i=0;i<M.texCount;i++){es.push({binding:3+2*i,resource:ts[i]>=0&&rt.texs[ts[i]]?rt.texs[ts[i]]:rt.white});es.push({binding:4+2*i,resource:rt.sampler})}bg=rt.dev.createBindGroup({layout:M.pl.getBindGroupLayout(0),entries:es});M.bgs[key]=bg}return bg};rt.assetBg=(A,M,op)=>{if(A.gen!==rt.texGen){A.bgp={};A.gen=rt.texGen}let bg=A.bgp[op];if(!bg){bg=rt.bgFor(M,A.t0,A.t1,A.t2,A.t3,op,Math.floor(A.slot/maxN));A.bgp[op]=bg}return bg};rt.exec=(pass,ai,mi,gen,slot,blend)=>{const A=rt.assets[ai];const M=rt.mats[A.mat];const mm=rt.meshes[mi];if(!mm||!mm.b||mm.gen!==gen)return;const pipe=mm.topo===1?(blend?M.lplb:M.lpl):(blend?M.plb:M.pl);if(!pipe)return;const bg=rt.assetBg(A,M,Math.floor(slot/maxN));pass.p.setPipeline(pipe);pass.p.setVertexBuffer(0,mm.b);pass.p.setBindGroup(0,bg,[(slot%maxN)*256,(A.slot%maxN)*256]);if(mm.ib){pass.p.setIndexBuffer(mm.ib,'uint32');pass.p.drawIndexed(mm.icount)}else{pass.p.draw(mm.n)}};return rt}"
+prim__initRt : JSVal -> JSVal -> Int -> Int -> Int -> PrimIO JSVal
 
 ||| Build a material type's pipelines from its generated WGSL and specs:
 ||| triangle opaque/blended always, line opaque/blended when the material
-||| declares `vs_line`. The bind group layout is decoded from the kinded
-||| spec: 0 a uniform buffer, 1 a texture, 2 a sampler.
-%foreign "javascript:lambda:(rt,src,bindSpec,meshSpec,meshStride,lineSpec,lineStride,hasLine)=>{const dev=rt.dev;const mod=dev.createShaderModule({code:src});const fmt=navigator.gpu.getPreferredCanvasFormat();const entries=bindSpec.split(';').map(e=>{const a=e.split(',').map(Number);if(a[0]===0)return {binding:a[1],visibility:a[2],buffer:{type:'uniform',hasDynamicOffset:!!a[3],minBindingSize:a[4]}};if(a[0]===1)return {binding:a[1],visibility:2,texture:{}};return {binding:a[1],visibility:2,sampler:{}}});const bgl=dev.createBindGroupLayout({entries:entries});const layout=dev.createPipelineLayout({bindGroupLayouts:[bgl]});const attrsOf=(s)=>s.split(';').map(e=>{const a=e.split(',').map(Number);return {shaderLocation:a[0],offset:a[1],format:a[2]>1?'float32x'+a[2]:'float32'}});const blendState={color:{srcFactor:'src-alpha',dstFactor:'one-minus-src-alpha'},alpha:{srcFactor:'one',dstFactor:'one-minus-src-alpha'}};const mk=(entry,spec,stride,line,blend)=>dev.createRenderPipeline({layout:layout,vertex:{module:mod,entryPoint:entry,buffers:[{arrayStride:stride,attributes:attrsOf(spec)}]},fragment:{module:mod,entryPoint:'fs',targets:[{format:fmt,blend:blend?blendState:undefined}]},primitive:{topology:line?'line-list':'triangle-list',cullMode:line?'none':'back'},depthStencil:{format:'depth24plus',depthWriteEnabled:!blend,depthCompare:'less'}});const matSize=Number(bindSpec.split(';')[2].split(',')[4]);const texCount=bindSpec.split(';').filter(e=>e[0]==='1').length;return rt.mats.push({pl:mk('vs',meshSpec,meshStride,false,false),plb:mk('vs',meshSpec,meshStride,false,true),lpl:hasLine?mk('vs_line',lineSpec,lineStride,true,false):null,lplb:hasLine?mk('vs_line',lineSpec,lineStride,true,true):null,matSize:matSize,texCount:texCount,bgs:{}})-1}"
-prim__register : JSVal -> String -> String -> String -> Int -> String -> Int -> Int -> PrimIO Int
+||| declares `vs_line`, one instanced (opaque) when it declares `vs_inst`
+||| -- a second vertex buffer at instance step rate carries the instance
+||| matrix columns and colour. The bind group layout is decoded from the
+||| kinded spec: 0 a uniform buffer, 1 a texture, 2 a sampler.
+%foreign "javascript:lambda:(rt,src,bindSpec,meshSpec,meshStride,lineSpec,lineStride,instSpec,instStride,hasLine,hasInst)=>{const dev=rt.dev;const mod=dev.createShaderModule({code:src});const fmt=navigator.gpu.getPreferredCanvasFormat();const entries=bindSpec.split(';').map(e=>{const a=e.split(',').map(Number);if(a[0]===0)return {binding:a[1],visibility:a[2],buffer:{type:'uniform',hasDynamicOffset:!!a[3],minBindingSize:a[4]}};if(a[0]===1)return {binding:a[1],visibility:2,texture:{}};return {binding:a[1],visibility:2,sampler:{}}});const bgl=dev.createBindGroupLayout({entries:entries});const layout=dev.createPipelineLayout({bindGroupLayouts:[bgl]});const attrsOf=(s)=>s.split(';').map(e=>{const a=e.split(',').map(Number);return {shaderLocation:a[0],offset:a[1],format:a[2]>1?'float32x'+a[2]:'float32'}});const blendState={color:{srcFactor:'src-alpha',dstFactor:'one-minus-src-alpha'},alpha:{srcFactor:'one',dstFactor:'one-minus-src-alpha'}};const mk=(entry,bufs,line,blend)=>dev.createRenderPipeline({layout:layout,vertex:{module:mod,entryPoint:entry,buffers:bufs},fragment:{module:mod,entryPoint:'fs',targets:[{format:fmt,blend:blend?blendState:undefined}]},primitive:{topology:line?'line-list':'triangle-list',cullMode:line?'none':'back'},depthStencil:{format:'depth24plus',depthWriteEnabled:!blend,depthCompare:'less'}});const meshBuf={arrayStride:meshStride,attributes:attrsOf(meshSpec)};const lineBuf=[{arrayStride:lineStride,attributes:attrsOf(lineSpec)}];const instBufs=[meshBuf,{arrayStride:instStride,stepMode:'instance',attributes:attrsOf(instSpec)}];const matSize=Number(bindSpec.split(';')[2].split(',')[4]);const texCount=bindSpec.split(';').filter(e=>e[0]==='1').length;return rt.mats.push({pl:mk('vs',[meshBuf],false,false),plb:mk('vs',[meshBuf],false,true),lpl:hasLine?mk('vs_line',lineBuf,true,false):null,lplb:hasLine?mk('vs_line',lineBuf,true,true):null,pli:hasInst?mk('vs_inst',instBufs,false,false):null,matSize:matSize,texCount:texCount,bgs:{}})-1}"
+prim__register : JSVal -> String -> String -> String -> Int -> String -> Int -> String -> Int -> Int -> Int -> PrimIO Int
 
-||| A material asset: its slot, its textures, its (cached) bind group.
-%foreign "javascript:lambda:(rt,mat,slot,t0,t1,t2,t3)=>{const M=rt.mats[mat];return rt.assets.push({mat:mat,slot:slot,t0:t0,t1:t1,t2:t2,t3:t3,bg:rt.bgFor(M,t0,t1,t2,t3),gen:rt.texGen})-1}"
+||| A material asset: its slot, its textures, and a bind group per object
+||| page, filled lazily by `assetBg`.
+%foreign "javascript:lambda:(rt,mat,slot,t0,t1,t2,t3)=>rt.assets.push({mat:mat,slot:slot,t0:t0,t1:t1,t2:t2,t3:t3,bgp:{},gen:rt.texGen})-1"
 prim__addAsset : JSVal -> Int -> Int -> Int -> Int -> Int -> Int -> PrimIO Int
 
-%foreign "javascript:lambda:(rt,ai,t0,t1,t2,t3)=>{const A=rt.assets[ai];const M=rt.mats[A.mat];A.t0=t0;A.t1=t1;A.t2=t2;A.t3=t3;A.bg=rt.bgFor(M,t0,t1,t2,t3);A.gen=rt.texGen;return 0}"
+%foreign "javascript:lambda:(rt,ai,t0,t1,t2,t3)=>{const A=rt.assets[ai];A.t0=t0;A.t1=t1;A.t2=t2;A.t3=t3;A.bgp={};return 0}"
 prim__updateAsset : JSVal -> Int -> Int -> Int -> Int -> Int -> PrimIO Int
 
-||| Upload one asset's 256-byte slot from the material scratch: once per
-||| add or update, never per draw.
-%foreign "javascript:lambda:(rt,a,slot)=>{rt.dev.queue.writeBuffer(rt.mbuf,slot*256,a,slot*64,64);return 0}"
-prim__uploadMatSlot : JSVal -> AnyPtr -> Int -> PrimIO Int
+||| Upload one asset's 256-byte slot from the staging scratch (`local` is
+||| the scratch slot, `global` the asset's slot across the paged material
+||| buffers): once per add or update, never per draw.
+%foreign "javascript:lambda:(rt,a,local,global)=>{rt.dev.queue.writeBuffer(rt.pageOf(rt.mbufs,Math.floor(global/rt.maxN)),(global%rt.maxN)*256,a,local*64,64);return 0}"
+prim__uploadMatSlot : JSVal -> AnyPtr -> Int -> Int -> PrimIO Int
 
 ||| The engine's gizmo line pipeline and its one bind group (globals + the
 ||| object buffer; colours are per vertex, the lane a whole-overlay tint).
-%foreign "javascript:lambda:(rt,src,bindSpec,lineSpec,lineStride)=>{const dev=rt.dev;const mod=dev.createShaderModule({code:src});const fmt=navigator.gpu.getPreferredCanvasFormat();const entries=bindSpec.split(';').map(e=>{const a=e.split(',').map(Number);return {binding:a[1],visibility:a[2],buffer:{type:'uniform',hasDynamicOffset:!!a[3],minBindingSize:a[4]}}});const bgl=dev.createBindGroupLayout({entries:entries});const layout=dev.createPipelineLayout({bindGroupLayouts:[bgl]});const attrs=lineSpec.split(';').map(e=>{const a=e.split(',').map(Number);return {shaderLocation:a[0],offset:a[1],format:a[2]>1?'float32x'+a[2]:'float32'}});const pl=dev.createRenderPipeline({layout:layout,vertex:{module:mod,entryPoint:'vs',buffers:[{arrayStride:lineStride,attributes:attrs}]},fragment:{module:mod,entryPoint:'fs',targets:[{format:fmt,blend:{color:{srcFactor:'src-alpha',dstFactor:'one-minus-src-alpha'},alpha:{srcFactor:'one',dstFactor:'one-minus-src-alpha'}}}]},primitive:{topology:'line-list'},depthStencil:{format:'depth24plus',depthWriteEnabled:false,depthCompare:'less'}});const bg=dev.createBindGroup({layout:pl.getBindGroupLayout(0),entries:[{binding:0,resource:{buffer:rt.gbuf}},{binding:1,resource:{buffer:rt.obuf,size:rt.objSize}}]});rt.line={pl:pl,bg:bg};return 0}"
+%foreign "javascript:lambda:(rt,src,bindSpec,lineSpec,lineStride)=>{const dev=rt.dev;const mod=dev.createShaderModule({code:src});const fmt=navigator.gpu.getPreferredCanvasFormat();const entries=bindSpec.split(';').map(e=>{const a=e.split(',').map(Number);return {binding:a[1],visibility:a[2],buffer:{type:'uniform',hasDynamicOffset:!!a[3],minBindingSize:a[4]}}});const bgl=dev.createBindGroupLayout({entries:entries});const layout=dev.createPipelineLayout({bindGroupLayouts:[bgl]});const attrs=lineSpec.split(';').map(e=>{const a=e.split(',').map(Number);return {shaderLocation:a[0],offset:a[1],format:a[2]>1?'float32x'+a[2]:'float32'}});const pl=dev.createRenderPipeline({layout:layout,vertex:{module:mod,entryPoint:'vs',buffers:[{arrayStride:lineStride,attributes:attrs}]},fragment:{module:mod,entryPoint:'fs',targets:[{format:fmt,blend:{color:{srcFactor:'src-alpha',dstFactor:'one-minus-src-alpha'},alpha:{srcFactor:'one',dstFactor:'one-minus-src-alpha'}}}]},primitive:{topology:'line-list'},depthStencil:{format:'depth24plus',depthWriteEnabled:false,depthCompare:'less'}});rt.line={pl:pl,bgs:{}};return 0}"
 prim__lineInit : JSVal -> String -> String -> String -> Int -> PrimIO Int
 
 ||| Reserve a texture id *now*; decode fills the table entry and bumps
@@ -96,18 +110,37 @@ prim__depthTexture : JSVal -> JSVal -> PrimIO JSVal
 %foreign "javascript:lambda:(dev,n)=>dev.createBuffer({size:n,usage:72})"
 prim__uniformBuffer : JSVal -> Int -> PrimIO JSVal
 
-||| usage 40 = VERTEX (32) | COPY_DST (8)
-%foreign "javascript:lambda:(rt,a,n,topo)=>{const dev=rt.dev;const b=dev.createBuffer({size:a.byteLength,usage:40});dev.queue.writeBuffer(b,0,a);return rt.meshes.push({b:b,n:n,topo:topo,ib:null,icount:0})-1}"
+||| usage 40 = VERTEX (32) | COPY_DST (8). Indices come off the free list
+||| before the table grows; a recycled entry keeps its bumped generation.
+%foreign "javascript:lambda:(rt,a,n,topo)=>{const dev=rt.dev;const b=dev.createBuffer({size:a.byteLength,usage:40});dev.queue.writeBuffer(b,0,a);const i=rt.freeMeshes.length?rt.freeMeshes.pop():(rt.meshes.push(null)-1);const g=rt.meshes[i]?rt.meshes[i].gen:0;rt.meshes[i]={b:b,n:n,topo:topo,ib:null,icount:0,gen:g};return i}"
 prim__createMesh : JSVal -> AnyPtr -> Int -> Int -> PrimIO Int
 
 ||| usage 24 = INDEX (16) | COPY_DST (8)
-%foreign "javascript:lambda:(rt,a,n,idx,icount)=>{const dev=rt.dev;const b=dev.createBuffer({size:a.byteLength,usage:40});dev.queue.writeBuffer(b,0,a);const ib=dev.createBuffer({size:idx.byteLength,usage:24});dev.queue.writeBuffer(ib,0,idx);return rt.meshes.push({b:b,n:n,topo:0,ib:ib,icount:icount})-1}"
+%foreign "javascript:lambda:(rt,a,n,idx,icount)=>{const dev=rt.dev;const b=dev.createBuffer({size:a.byteLength,usage:40});dev.queue.writeBuffer(b,0,a);const ib=dev.createBuffer({size:idx.byteLength,usage:24});dev.queue.writeBuffer(ib,0,idx);const i=rt.freeMeshes.length?rt.freeMeshes.pop():(rt.meshes.push(null)-1);const g=rt.meshes[i]?rt.meshes[i].gen:0;rt.meshes[i]={b:b,n:n,topo:0,ib:ib,icount:icount,gen:g};return i}"
 prim__createMeshIndexed : JSVal -> AnyPtr -> Int -> AnyPtr -> Int -> PrimIO Int
 
-||| Destroy the buffers and tombstone the table entry; `exec` skips draws
-||| whose entry is gone, so stale handles are silent, not fatal.
-%foreign "javascript:lambda:(rt,mi)=>{const mm=rt.meshes[mi];if(!mm)return 0;mm.b.destroy();if(mm.ib)mm.ib.destroy();rt.meshes[mi]=null;return 0}"
-prim__freeMesh : JSVal -> Int -> PrimIO Int
+||| The generation an index was (re)minted at, read back once at create.
+%foreign "javascript:lambda:(rt,i)=>{const mm=rt.meshes[i];return mm?mm.gen:0}"
+prim__meshGen : JSVal -> Int -> PrimIO Int
+
+||| Destroy the buffers, bump the generation and recycle the index; `exec`
+||| skips draws whose handle generation no longer matches, so stale
+||| handles are silent, not fatal. A stale free is a no-op likewise.
+%foreign "javascript:lambda:(rt,mi,gen)=>{const mm=rt.meshes[mi];if(!mm||!mm.b||mm.gen!==gen)return 0;mm.b.destroy();if(mm.ib)mm.ib.destroy();mm.b=null;mm.ib=null;mm.gen++;rt.freeMeshes.push(mi);return 0}"
+prim__freeMesh : JSVal -> Int -> Int -> PrimIO Int
+
+%foreign "javascript:lambda:(rt)=>rt.insts.push({b:null,cap:0,n:0})-1"
+prim__createInstances : JSVal -> PrimIO Int
+
+||| Replace an instance buffer's contents, growing it when the slice
+||| outgrows it. `floats` is the used prefix in Float32Array elements.
+%foreign "javascript:lambda:(rt,ih,a,floats,count)=>{const I=rt.insts[ih];const bytes=floats*4;if(!I.b||I.cap<bytes){if(I.b)I.b.destroy();I.cap=Math.max(bytes,I.cap*2,1024);I.b=rt.dev.createBuffer({size:I.cap,usage:40})}rt.dev.queue.writeBuffer(I.b,0,a,0,floats);I.n=count;return 0}"
+prim__writeInstances : JSVal -> Int -> AnyPtr -> Int -> Int -> PrimIO Int
+
+||| One call, `count` instances: mesh at vertex rate on slot 0, instance
+||| data at instance rate on slot 1. Opaque phase.
+%foreign "javascript:lambda:(rt,pass,asset,mesh,gen,slot,ih)=>{const A=rt.assets[asset];const M=rt.mats[A.mat];const mm=rt.meshes[mesh];const I=rt.insts[ih];if(!mm||!mm.b||mm.gen!==gen||!I||!I.b||I.n<=0||!M.pli)return 0;const bg=rt.assetBg(A,M,Math.floor(slot/rt.maxN));pass.p.setPipeline(M.pli);pass.p.setVertexBuffer(0,mm.b);pass.p.setVertexBuffer(1,I.b);pass.p.setBindGroup(0,bg,[(slot%rt.maxN)*256,(A.slot%rt.maxN)*256]);if(mm.ib){pass.p.setIndexBuffer(mm.ib,'uint32');pass.p.drawIndexed(mm.icount,I.n)}else{pass.p.draw(mm.n,I.n)}return 0}"
+prim__drawInstanced : JSVal -> JSVal -> Int -> Int -> Int -> Int -> Int -> PrimIO Int
 
 ||| The gizmo overlay is the one buffer that gets replaced; the old one
 ||| must go, and never mid-frame.
@@ -117,30 +150,32 @@ prim__setLines : JSVal -> AnyPtr -> Int -> PrimIO Int
 %foreign "javascript:lambda:(dev,b,off,a)=>{dev.queue.writeBuffer(b,off,a);return 0}"
 prim__write : JSVal -> JSVal -> Int -> AnyPtr -> PrimIO Int
 
-||| Upload only the prefix of `a` that this frame actually filled. `count`
-||| is in Float32Array elements.
-%foreign "javascript:lambda:(dev,b,a,count)=>{dev.queue.writeBuffer(b,0,a,0,count);return 0}"
-prim__writePrefix : JSVal -> JSVal -> AnyPtr -> Int -> PrimIO Int
+||| Upload one object page's used prefix. `count` is in Float32Array
+||| elements.
+%foreign "javascript:lambda:(rt,page,a,count)=>{rt.dev.queue.writeBuffer(rt.pageOf(rt.obufs,page),0,a,0,count);return 0}"
+prim__writeObjPage : JSVal -> Int -> AnyPtr -> Int -> PrimIO Int
 
 %foreign "javascript:lambda:(dev,ctx,depth,r,g,b)=>{const e=dev.createCommandEncoder();const p=e.beginRenderPass({colorAttachments:[{view:ctx.getCurrentTexture().createView(),clearValue:{r:r,g:g,b:b,a:1},loadOp:'clear',storeOp:'store'}],depthStencilAttachment:{view:depth.createView(),depthClearValue:1,depthLoadOp:'clear',depthStoreOp:'store'}});return {e:e,p:p}}"
 prim__beginPass : JSVal -> JSVal -> JSVal -> Double -> Double -> Double -> PrimIO JSVal
 
 ||| One draw: opaque and masked record immediately; blended queue for the
 ||| sorted flush. The two dynamic offsets pick the draw's object slot and
-||| the asset's material slot.
-%foreign "javascript:lambda:(rt,pass,asset,mesh,slot,blend,depth)=>{if(blend){rt.pend.push({a:asset,m:mesh,s:slot,d:depth});return 0}rt.exec(pass,asset,mesh,slot,false);return 0}"
-prim__draw : JSVal -> JSVal -> Int -> Int -> Int -> Int -> Double -> PrimIO Int
+||| the asset's material slot, each within its page.
+%foreign "javascript:lambda:(rt,pass,asset,mesh,gen,slot,blend,depth)=>{if(blend){rt.pend.push({a:asset,m:mesh,g:gen,s:slot,d:depth});return 0}rt.exec(pass,asset,mesh,gen,slot,false);return 0}"
+prim__draw : JSVal -> JSVal -> Int -> Int -> Int -> Int -> Int -> Double -> PrimIO Int
 
 ||| The batched form: one foreign call records `count` consecutive object
-||| slots against one asset.
-%foreign "javascript:lambda:(rt,pass,asset,mesh,first,count,blend,depth)=>{if(blend){for(let i=0;i<count;i++)rt.pend.push({a:asset,m:mesh,s:first+i,d:depth});return 0}const A=rt.assets[asset];const M=rt.mats[A.mat];const mm=rt.meshes[mesh];if(!mm)return 0;if(A.gen!==rt.texGen){A.bg=rt.bgFor(M,A.t0,A.t1,A.t2,A.t3);A.gen=rt.texGen}const pipe=mm.topo===1?M.lpl:M.pl;if(!pipe)return 0;pass.p.setPipeline(pipe);pass.p.setVertexBuffer(0,mm.b);if(mm.ib)pass.p.setIndexBuffer(mm.ib,'uint32');for(let i=0;i<count;i++){pass.p.setBindGroup(0,A.bg,[(first+i)*256,A.slot*256]);if(mm.ib)pass.p.drawIndexed(mm.icount);else pass.p.draw(mm.n)}return 0}"
-prim__drawSlices : JSVal -> JSVal -> Int -> Int -> Int -> Int -> Int -> Double -> PrimIO Int
+||| slots against one asset. The Idris side chunks batches at page
+||| boundaries, so `first .. first+count-1` share one page and one bind
+||| group.
+%foreign "javascript:lambda:(rt,pass,asset,mesh,gen,first,count,blend,depth)=>{if(blend){for(let i=0;i<count;i++)rt.pend.push({a:asset,m:mesh,g:gen,s:first+i,d:depth});return 0}const A=rt.assets[asset];const M=rt.mats[A.mat];const mm=rt.meshes[mesh];if(!mm||!mm.b||mm.gen!==gen)return 0;const pipe=mm.topo===1?M.lpl:M.pl;if(!pipe)return 0;const bg=rt.assetBg(A,M,Math.floor(first/rt.maxN));pass.p.setPipeline(pipe);pass.p.setVertexBuffer(0,mm.b);if(mm.ib)pass.p.setIndexBuffer(mm.ib,'uint32');const mo=(A.slot%rt.maxN)*256;for(let i=0;i<count;i++){pass.p.setBindGroup(0,bg,[((first+i)%rt.maxN)*256,mo]);if(mm.ib)pass.p.drawIndexed(mm.icount);else pass.p.draw(mm.n)}return 0}"
+prim__drawSlices : JSVal -> JSVal -> Int -> Int -> Int -> Int -> Int -> Int -> Double -> PrimIO Int
 
-%foreign "javascript:lambda:(rt,pass,off)=>{if(!rt.lineBuf||rt.lineCount<=0)return 0;pass.p.setPipeline(rt.line.pl);pass.p.setVertexBuffer(0,rt.lineBuf);pass.p.setBindGroup(0,rt.line.bg,[off]);pass.p.draw(rt.lineCount);return 0}"
+%foreign "javascript:lambda:(rt,pass,slot)=>{if(!rt.lineBuf||rt.lineCount<=0)return 0;const op=Math.floor(slot/rt.maxN);let bg=rt.line.bgs[op];if(!bg){bg=rt.dev.createBindGroup({layout:rt.line.pl.getBindGroupLayout(0),entries:[{binding:0,resource:{buffer:rt.gbuf}},{binding:1,resource:{buffer:rt.pageOf(rt.obufs,op),size:rt.objSize}}]});rt.line.bgs[op]=bg}pass.p.setPipeline(rt.line.pl);pass.p.setVertexBuffer(0,rt.lineBuf);pass.p.setBindGroup(0,bg,[(slot%rt.maxN)*256]);pass.p.draw(rt.lineCount);return 0}"
 prim__drawLines : JSVal -> JSVal -> Int -> PrimIO Int
 
 ||| The transparent phase: back to front, so blends composite correctly.
-%foreign "javascript:lambda:(rt,pass)=>{rt.pend.sort((x,y)=>y.d-x.d);for(const d of rt.pend)rt.exec(pass,d.a,d.m,d.s,true);rt.pend.length=0;return 0}"
+%foreign "javascript:lambda:(rt,pass)=>{rt.pend.sort((x,y)=>y.d-x.d);for(const d of rt.pend)rt.exec(pass,d.a,d.m,d.g,d.s,true);rt.pend.length=0;return 0}"
 prim__flush : JSVal -> JSVal -> PrimIO Int
 
 %foreign "javascript:lambda:(dev,pass)=>{pass.p.end();dev.queue.submit([pass.e.finish()]);return 0}"
@@ -150,15 +185,19 @@ public export
 record Gpu where
   constructor MkGpu
   device, ctx, canvas, rt : JSVal
-  globalBuf, objBuf, matBuf : JSVal
+  globalBuf : JSVal
   globalScratch : GlobalScratch
-  objScratch, matScratch : ObjScratch
+  ||| The paged per-draw engine blocks: no frame draw ceiling.
+  objScratch : Paged
+  ||| One-page staging for material slots -- each asset's block is staged
+  ||| at `slot mod maxObjects` and uploaded straight to its page.
+  matScratch : ObjScratch
   ||| Rebuilt whenever the canvas changes size, so it always matches.
   depth : IORef JSVal
   ||| Eye and forward at `beginFrame`, for sorting the transparent phase.
   eyeFwd : IORef (V3, V3)
-  ||| Material assets minted so far: the next free slot of the material
-  ||| buffer.
+  ||| Material assets minted so far: the next free slot of the paged
+  ||| material buffers.
   assetCount : IORef Int
   lineCount : IORef Int
 
@@ -181,18 +220,16 @@ initGpu canvasId k =
         depthTex <- primIO (prim__depthTexture dev canvas)
         depth <- newIORef depthTex
         gbuf <- primIO (prim__uniformBuffer dev globalSize)
-        obuf <- primIO (prim__uniformBuffer dev (objStride * maxObjects))
-        mbuf <- primIO (prim__uniformBuffer dev (objStride * maxObjects))
-        rt <- primIO (prim__initRt dev gbuf obuf mbuf objSize)
+        rt <- primIO (prim__initRt dev gbuf objSize objStride maxObjects)
         ignore (primIO (prim__lineInit rt (wgslLinePrologue ++ lineWgslSrc)
                                        lineBindSpec lineVertexSpec lineStride))
         gs <- newGlobalScratch
-        os <- newObjScratch
+        os <- newPaged
         ms <- newObjScratch
         ef <- newIORef (zero3, MkV3 0.0 0.0 (-1.0))
         ac <- newIORef 0
         lc <- newIORef 0
-        k (Just (MkGpu dev ctx canvas rt gbuf obuf mbuf gs os ms depth ef ac lc))
+        k (Just (MkGpu dev ctx canvas rt gbuf gs os ms depth ef ac lc))
 
 ||| The pass and the slot counter, held in the linear token: a draw cannot
 ||| see a pass that has ended, and cannot read a slot index left over from
@@ -208,27 +245,33 @@ depthOf r model = do
   pure (dot3 fwd (sub3 (MkV3 model.m12 model.m13 model.m14) eye))
 
 ||| Write a material value into an asset slot and its bindings backend-side.
+||| The staging slot is `i mod maxObjects`; the upload lands on slot `i` of
+||| the paged material buffers.
 fillAsset : Material m => Gpu -> (slotIdx : Int) -> m -> IO ()
 fillAsset r i v =
-  case slot r.matScratch i of
+  case slot r.matScratch (i `mod` maxObjects) of
     Nothing => pure ()
     Just s => do
       writeMat (matWriter r.matScratch s) v
-      ignore (primIO (prim__uploadMatSlot r.rt (raw r.matScratch) (slotIndex s)))
+      ignore (primIO (prim__uploadMatSlot r.rt (raw r.matScratch) (slotIndex s) i))
 
 export
 Renderer Gpu GpuFrame where
   rendererName _ = "WebGPU"
 
-  createMesh {t} r vs =
-    meshHandle <$> primIO (prim__createMesh r.rt (vertsRaw vs) (vertsCount vs)
-                                            (topoCode t))
+  createMesh {t} r vs = do
+    i <- primIO (prim__createMesh r.rt (vertsRaw vs) (vertsCount vs) (topoCode t))
+    g <- primIO (prim__meshGen r.rt i)
+    pure (meshHandle i g)
 
-  createMeshIndexed r vs ix =
-    meshHandle <$> primIO (prim__createMeshIndexed r.rt (vertsRaw vs) (vertsCount vs)
-                                                   (indicesRaw ix) (indicesCount ix))
+  createMeshIndexed r vs ix = do
+    i <- primIO (prim__createMeshIndexed r.rt (vertsRaw vs) (vertsCount vs)
+                                         (indicesRaw ix) (indicesCount ix))
+    g <- primIO (prim__meshGen r.rt i)
+    pure (meshHandle i g)
 
-  freeMesh r mesh = ignore (primIO (prim__freeMesh r.rt (meshIndex mesh)))
+  freeMesh r mesh =
+    ignore (primIO (prim__freeMesh r.rt (meshIndex mesh) (meshGen mesh)))
 
   loadTexture r src =
     let url = case src of
@@ -239,7 +282,9 @@ Renderer Gpu GpuFrame where
   registerMaterial r {m} = do
     i <- primIO (prim__register r.rt (materialWgsl {m}) (materialSpec {m})
                                 meshVertexSpec meshStride lineVertexSpec lineStride
-                                (if matLineEntry {m} then 1 else 0))
+                                instanceSpec instanceStride
+                                (if matLineEntry {m} then 1 else 0)
+                                (if matInstEntry {m} then 1 else 0))
     pure (materialId i)
 
   addMaterial r mid v = do
@@ -282,49 +327,86 @@ Renderer Gpu GpuFrame where
       primIO (prim__beginPass r.device r.ctx depthTex cc.red cc.green cc.blue)
     pure1 (Just (MkGpuFrame p 0))
 
-  draw r (MkGpuFrame p i) mesh h model =
-    case slot r.objScratch i of
-      Nothing => pure1 (MkGpuFrame p i)
-      Just s => do
-        liftIO $ do
-          pokeObject r.objScratch s model (handleCode h) (handleCutoff h) 0.0 0.0
+  draw r (MkGpuFrame p i) mesh h model = do
+    liftIO $ do
+      mp <- pageSlot r.objScratch i
+      case mp of
+        Nothing => pure ()
+        Just (_, arr, s) => do
+          pokeObject arr s model (handleCode h) (handleCutoff h) 0.0 0.0
           d <- if handleBlend h then depthOf r model else pure 0.0
           ignore (primIO (prim__draw r.rt p (handleAsset h) (meshIndex mesh)
-                                     (slotIndex s) (if handleBlend h then 1 else 0) d))
-        pure1 (MkGpuFrame p (i + 1))
+                                     (meshGen mesh) i
+                                     (if handleBlend h then 1 else 0) d))
+    pure1 (MkGpuFrame p (i + 1))
 
+  -- Chunked at page boundaries, so each foreign call's slot run shares a
+  -- page (and therefore a bind group).
   drawMany r (MkGpuFrame p i) mesh h models = do
-    i' <- liftIO $ case models of
-      [] => pure i
-      (mdl0 :: _) => do
-        filled <- fillModels r.objScratch i (handleCode h) (handleCutoff h) models
-        let count = filled - i
-        when (count > 0) $ do
-          d <- if handleBlend h then depthOf r mdl0 else pure 0.0
-          ignore (primIO (prim__drawSlices r.rt p (handleAsset h) (meshIndex mesh)
-                                           i count (if handleBlend h then 1 else 0) d))
-        pure filled
+    i' <- liftIO (goChunks i models)
     pure1 (MkGpuFrame p i')
+    where
+      goChunks : Int -> List Mat4 -> IO Int
+      goChunks i [] = pure i
+      goChunks i ms@(m0 :: _) = do
+        mp <- pageSlot r.objScratch i
+        case mp of
+          Nothing => pure i
+          Just (_, arr, _) => do
+            let local = i `mod` maxObjects
+                (chunk, rest) = splitAt (cast (maxObjects - local)) ms
+            filled <- fillModels arr local (handleCode h) (handleCutoff h) chunk
+            let count = filled - local
+            if count <= 0 then pure i else do
+              d <- if handleBlend h then depthOf r m0 else pure 0.0
+              ignore (primIO (prim__drawSlices r.rt p (handleAsset h)
+                                               (meshIndex mesh) (meshGen mesh)
+                                               i count
+                                               (if handleBlend h then 1 else 0) d))
+              goChunks (i + count) rest
 
-  drawGizmos r (MkGpuFrame p i) =
-    case slot r.objScratch i of
-      Nothing => pure1 (MkGpuFrame p i)
-      Just s => do
-        liftIO $ do
+  createInstances r = instanceHandle <$> primIO (prim__createInstances r.rt)
+
+  writeInstances r ih sl =
+    ignore (primIO (prim__writeInstances r.rt (instanceIndex ih) (instRaw sl)
+                                         (instCount sl * instanceFloats)
+                                         (instCount sl)))
+
+  drawInstanced r (MkGpuFrame p i) mesh h ih model = do
+    liftIO $ do
+      mp <- pageSlot r.objScratch i
+      case mp of
+        Nothing => pure ()
+        Just (_, arr, s) => do
+          pokeObject arr s model (handleCode h) (handleCutoff h) 0.0 0.0
+          ignore (primIO (prim__drawInstanced r.rt p (handleAsset h)
+                                              (meshIndex mesh) (meshGen mesh)
+                                              i (instanceIndex ih)))
+    pure1 (MkGpuFrame p (i + 1))
+
+  drawGizmos r (MkGpuFrame p i) = do
+    liftIO $ do
+      mp <- pageSlot r.objScratch i
+      case mp of
+        Nothing => pure ()
+        Just (_, arr, s) => do
           n <- readIORef r.lineCount
           when (n > 0) $ do
             -- Identity model, white lane: colours are per vertex; the lane
             -- is a whole-overlay tint.
-            pokeObject r.objScratch s identity 1.0 1.0 1.0 1.0
-            ignore (primIO (prim__drawLines r.rt p (slotOffset s)))
-        pure1 (MkGpuFrame p (i + 1))
+            pokeObject arr s identity 1.0 1.0 1.0 1.0
+            ignore (primIO (prim__drawLines r.rt p i))
+    pure1 (MkGpuFrame p (i + 1))
 
   endFrame r (MkGpuFrame p i) = liftIO $ do
     -- The sorted transparent phase records last, over the finished opaque
     -- scene.
     ignore (primIO (prim__flush r.rt p))
-    -- One upload for every draw's engine block. Material data went up when
-    -- the assets were made. Queue writes are ordered before the submit
-    -- that follows.
-    ignore (primIO (prim__writePrefix r.device r.objBuf (raw r.objScratch) (i * objFloats)))
+    -- One upload per touched object page. Material data went up when the
+    -- assets were made. Queue writes are ordered before the submit that
+    -- follows.
+    pages <- usedPages r.objScratch i
+    traverse_ (\(pg, arr, floats) =>
+                 ignore (primIO (prim__writeObjPage r.rt pg (raw arr) floats)))
+              pages
     ignore (primIO (prim__submit r.device p))

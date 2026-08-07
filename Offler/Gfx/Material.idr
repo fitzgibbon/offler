@@ -136,6 +136,18 @@ interface Material m where
   matGlslLineVert : String
   matGlslLineVert = ""
 
+  ||| Whether this material can draw *instanced* batches: its WGSL provides
+  ||| a `vs_inst` entry point over `InstIn` (the triangle attributes plus
+  ||| the per-instance matrix columns `im0..im3` and `icolor`), and
+  ||| `matGlslInstVert` the GLSL stage. `InstOk` gates `drawInstanced` on
+  ||| this at compile time. Defaults to False.
+  matInstEntry : Bool
+  matInstEntry = False
+
+  ||| The GLSL instanced vertex stage, when `matInstEntry` is True.
+  matGlslInstVert : String
+  matGlslInstVert = ""
+
   ||| Per-draw: how this value's alpha is honoured.
   alphaMode : m -> AlphaMode
 
@@ -171,6 +183,12 @@ public export
 0 TopoOk : Topology -> (0 m : Type) -> Material m => Type
 TopoOk Triangles m = Unit
 TopoOk Lines m = So (matLineEntry {m})
+
+||| Whether a material may draw instanced batches: only when it declares
+||| its instanced entry points. The same compile-time gate as `TopoOk`.
+public export
+0 InstOk : (0 m : Type) -> Material m => Type
+InstOk m = So (matInstEntry {m})
 
 ||| A registered material *type*: the pipelines and shaders for `m` on one
 ||| renderer, minted by `registerMaterial`. Phantom-typed, so an asset of
@@ -237,6 +255,10 @@ materialGlslVert = glslMaterialVertOf Triangles (matFields {m}) (matGlslVert {m}
 public export
 materialGlslLineVert : Material m => String
 materialGlslLineVert = glslMaterialVertOf Lines (matFields {m}) (matGlslLineVert {m})
+
+public export
+materialGlslInstVert : Material m => String
+materialGlslInstVert = glslMaterialInstVert (matFields {m}) (matGlslInstVert {m})
 
 public export
 materialGlslFrag : Material m => String

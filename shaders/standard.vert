@@ -7,7 +7,9 @@ out vec3 vNormal;
 out vec3 vWorld;
 out vec3 vObj;
 out vec2 vUv;
+out vec4 vICol;
 void main() {
+  vICol = vec4(1.0);
   // Object-space position, for procedural patterns that must stay welded to
   // the surface as the object moves and spins.
   vObj = pos;

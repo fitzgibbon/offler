@@ -180,6 +180,42 @@ floatsTrianglesOk = Refl
 0 floatsLinesOk : Offler.Gfx.Layout.floatsOf Lines * 4 = Offler.Gfx.Layout.strideOf Lines
 floatsLinesOk = Refl
 
+||| What an instanced draw streams at *instance* rate: the instance model
+||| matrix as four vec4 columns (`mat4x4(im0, im1, im2, im3)` in the
+||| shader) and a per-instance colour. Packed tightly, like all vertex
+||| attributes; the locations continue after the triangle mesh attributes.
+public export
+instanceFields : List Field
+instanceFields =
+  [ MkField "im0" Vec4, MkField "im1" Vec4, MkField "im2" Vec4
+  , MkField "im3" Vec4, MkField "icolor" Vec4 ]
+
+public export
+instanceStride : Int
+instanceStride = 80
+
+0 instanceStrideOk : Offler.Gfx.Layout.instanceStride
+                   = Offler.Gfx.Layout.packedEnd 0 Offler.Gfx.Layout.instanceFields
+instanceStrideOk = Refl
+
+public export
+instanceFloats : Int
+instanceFloats = 20
+
+0 instanceFloatsOk : Offler.Gfx.Layout.instanceFloats * 4 = Offler.Gfx.Layout.instanceStride
+instanceFloatsOk = Refl
+
+||| Float offset of the instance colour within one instance's block.
+public export
+instColorFloat : Int
+instColorFloat = 16
+
+0 instColorOk : Offler.Gfx.Layout.instColorFloat * 4
+              = Offler.Gfx.Layout.packedEnd 0
+                  [ MkField "im0" Vec4, MkField "im1" Vec4
+                  , MkField "im2" Vec4, MkField "im3" Vec4 ]
+instColorOk = Refl
+
 ||| No vertex attribute may need more than one location.
 public export
 attrsOk : List Field -> Bool
@@ -191,6 +227,9 @@ triangleAttrsOk = Refl
 
 0 lineAttrsOk : Offler.Gfx.Layout.attrsOk (Offler.Gfx.Layout.vertexFieldsOf Lines) = True
 lineAttrsOk = Refl
+
+0 instanceAttrsOk : Offler.Gfx.Layout.attrsOk Offler.Gfx.Layout.instanceFields = True
+instanceAttrsOk = Refl
 
 --------------------------------------------------------------------------------
 -- What the engine itself binds
@@ -245,13 +284,16 @@ wgslVertexStruct nm fs = "struct " ++ nm ++ " {\n" ++ go 0 fs ++ "};\n"
       "  @location(" ++ show i ++ ") " ++ n ++ " : " ++ wgslTy t ++ ",\n"
         ++ go (i + 1) fs
 
-||| The declarations every pipeline shares: the two vertex structs, the
-||| globals bound as `g`, and the per-draw engine block bound as `o`.
+||| The declarations every pipeline shares: the three vertex structs
+||| (`InstIn` is the triangle attributes followed by the instance-rate
+||| attributes, locations continuing), the globals bound as `g`, and the
+||| per-draw engine block bound as `o`.
 public export
 wgslEngineDecls : String
 wgslEngineDecls =
   wgslVertexStruct "VertexIn" (vertexFieldsOf Triangles)
     ++ wgslVertexStruct "LineIn" (vertexFieldsOf Lines)
+    ++ wgslVertexStruct "InstIn" (vertexFieldsOf Triangles ++ instanceFields)
     ++ wgslStruct "Globals" globalFields
     ++ "@group(0) @binding(0) var<uniform> g : Globals;\n"
     ++ wgslStruct "Obj" objFields
@@ -313,15 +355,17 @@ glslBlock nm fs =
     line : Field -> String
     line (MkField n t) = "  " ++ glslDecl n t ++ ";\n"
 
+||| `layout(location=i) in ...;` declarations from a starting location.
+public export
+glslAttrsFrom : Int -> List Field -> String
+glslAttrsFrom _ [] = ""
+glslAttrsFrom i (MkField n ty :: fs) =
+  "layout(location=" ++ show i ++ ") in " ++ glslDecl n ty ++ ";\n"
+    ++ glslAttrsFrom (i + 1) fs
+
 public export
 glslVertexInOf : Topology -> String
-glslVertexInOf t = go 0 (vertexFieldsOf t)
-  where
-    go : Int -> List Field -> String
-    go _ [] = ""
-    go i (MkField n ty :: fs) =
-      "layout(location=" ++ show i ++ ") in " ++ glslDecl n ty ++ ";\n"
-        ++ go (i + 1) fs
+glslVertexInOf t = glslAttrsFrom 0 (vertexFieldsOf t)
 
 public export
 glslEngineBlocks : String
@@ -355,6 +399,15 @@ public export
 glslMaterialVertOf : Topology -> (fields : List Field) -> (src : String) -> String
 glslMaterialVertOf t fields =
   spliceAfterVersion (glslVertexInOf t ++ glslEngineBlocks ++ glslBlock "Mat" fields)
+
+||| A material's *instanced* vertex stage: the triangle attributes, the
+||| instance-rate attributes at the following locations, and the blocks.
+public export
+glslMaterialInstVert : (fields : List Field) -> (src : String) -> String
+glslMaterialInstVert fields =
+  spliceAfterVersion (glslVertexInOf Triangles
+                        ++ glslAttrsFrom 3 instanceFields
+                        ++ glslEngineBlocks ++ glslBlock "Mat" fields)
 
 ||| A material's fragment stage: engine blocks, material block, textures,
 ||| and the alpha helper. The default precision comes first -- ES 300
@@ -420,16 +473,22 @@ lineBindSpec =
   joinSemi [ bufferEntry 0 3 False (structSize globalFields)
            , bufferEntry 1 3 True (structSize objFields) ]
 
-||| `location,byteOffset,components` per attribute, semicolon-separated.
+||| `location,byteOffset,components` per attribute, semicolon-separated,
+||| locations from a starting point (instance attributes continue after
+||| the mesh's).
 public export
-vertexSpecOf : List Field -> String
-vertexSpecOf fields = joinSemi (go 0 0 fields)
+vertexSpecFrom : Int -> List Field -> String
+vertexSpecFrom loc fields = joinSemi (go loc 0 fields)
   where
     go : Int -> Int -> List Field -> List String
     go _ _ [] = []
     go i at (MkField _ t :: fs) =
       (show i ++ "," ++ show at ++ "," ++ show (components t))
         :: go (i + 1) (at + sizeOf t) fs
+
+public export
+vertexSpecOf : List Field -> String
+vertexSpecOf = vertexSpecFrom 0
 
 public export
 topologySpec : Topology -> String
@@ -442,6 +501,12 @@ meshVertexSpec = topologySpec Triangles
 public export
 lineVertexSpec : String
 lineVertexSpec = topologySpec Lines
+
+||| Instance attributes: locations continue after the triangle mesh's
+||| three.
+public export
+instanceSpec : String
+instanceSpec = vertexSpecFrom 3 instanceFields
 
 --------------------------------------------------------------------------------
 -- The constants, and the proofs that make them honest

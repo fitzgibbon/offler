@@ -7,7 +7,9 @@ out vec3 vNormal;
 out vec3 vWorld;
 out vec3 vObj;
 out vec2 vUv;
+out vec4 vICol;
 void main() {
+  vICol = vec4(1.0);
   vObj = pos.xyz;
   vec4 world = model * vec4(pos.xyz, 1.0);
   vWorld = world.xyz;

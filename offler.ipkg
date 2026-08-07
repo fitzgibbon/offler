@@ -10,6 +10,7 @@ modules = Offler.Camera
         , Offler.Color
         , Offler.Gfx.Array
         , Offler.Gfx.Config
+        , Offler.Gfx.Instances
         , Offler.Gfx.Layout
         , Offler.Gfx.Material
         , Offler.Gfx.Platform

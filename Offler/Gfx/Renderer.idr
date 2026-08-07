@@ -18,6 +18,7 @@ import public Control.Linear.LIO
 import public Data.Linear.LMaybe
 
 import public Offler.Gfx.Array
+import public Offler.Gfx.Instances
 import public Offler.Gfx.Material
 import Offler.Camera
 import Offler.Color
@@ -30,21 +31,50 @@ import Offler.Math
 ||| A mesh the renderer has accepted, usable only with the renderer that
 ||| minted it, indexed by its primitive topology -- so the pipeline variant
 ||| a draw needs is decided by the type checker, not by a runtime mesh key.
-||| The constructor is private; `meshHandle`/`meshIndex` exist for backend
-||| modules and are not part of the application-facing API.
+||| The constructor is private; `meshHandle`/`meshIndex`/`meshGen` exist for
+||| backend modules and are not part of the application-facing API.
+|||
+||| The handle carries a *generation* beside the table index. `freeMesh`
+||| bumps the entry's generation and recycles the index, so the table never
+||| grows past the peak live mesh count; a draw checks the handle's
+||| generation against the entry's and a stale handle -- one whose index has
+||| been recycled -- draws nothing rather than someone else's mesh.
 export
 data MeshHandle : Topology -> Type where
-  MkMeshHandle : Int -> MeshHandle t
+  MkMeshHandle : (idx : Int) -> (gen : Int) -> MeshHandle t
 
-||| For backends only: wrap the index a backend's mesh table hands back.
+||| For backends only: wrap the index and generation a backend's mesh table
+||| hands back.
 export %inline
-meshHandle : Int -> MeshHandle t
+meshHandle : (idx : Int) -> (gen : Int) -> MeshHandle t
 meshHandle = MkMeshHandle
 
 ||| For backends only: the index into the backend's mesh table.
 export %inline
 meshIndex : MeshHandle t -> Int
-meshIndex (MkMeshHandle i) = i
+meshIndex (MkMeshHandle i _) = i
+
+||| For backends only: the generation the index was minted at.
+export %inline
+meshGen : MeshHandle t -> Int
+meshGen (MkMeshHandle _ g) = g
+
+||| A GPU-side instance buffer the renderer owns: bevy's per-batch
+||| instance buffer as a first-class handle. Create once, `writeInstances`
+||| whenever the crowd moves, `drawInstanced` to draw the whole batch in
+||| one call.
+export
+data InstanceHandle : Type where
+  MkInstanceHandle : Int -> InstanceHandle
+
+||| For backends only.
+export %inline
+instanceHandle : Int -> InstanceHandle
+instanceHandle = MkInstanceHandle
+
+export %inline
+instanceIndex : InstanceHandle -> Int
+instanceIndex (MkInstanceHandle i) = i
 
 ||| A renderer `r` and the frame token `f` its `beginFrame` mints.
 |||
@@ -70,12 +100,13 @@ interface Renderer r f | r where
   ||| release one that will not draw again with `freeMesh`.
   createMesh : {t : Topology} -> r -> Verts t -> IO (MeshHandle t)
 
-  ||| Release a mesh's GPU buffers. The handle and any copies of it are
-  ||| stale afterwards: draws against them are silent no-ops (the mesh
-  ||| table keeps a tombstone, never reuses the index). Unrestricted
-  ||| handles cannot make use-after-free a type error the way the frame
-  ||| token does -- a linear handle could not be drawn twice -- so this is
-  ||| the honest runtime seam: bevy frees on refcount for the same reason.
+  ||| Release a mesh's GPU buffers and recycle its table index. The handle
+  ||| and any copies of it are stale afterwards: their generation no longer
+  ||| matches the entry's, so draws against them are silent no-ops -- even
+  ||| after the index is reused for a new mesh. Unrestricted handles cannot
+  ||| make use-after-free a type error the way the frame token does -- a
+  ||| linear handle could not be drawn twice -- so this is the honest
+  ||| runtime seam: bevy frees on refcount for the same reason.
   freeMesh : r -> MeshHandle t -> IO ()
 
   ||| A triangle mesh with an index list: shared vertices are stored once
@@ -157,6 +188,24 @@ interface Renderer r f | r where
   ||| tested but not written, so lines neither hide each other nor stipple
   ||| where they cross.
   drawGizmos : r -> (1 frame : f) -> L1 IO f
+
+  ||| A GPU-side instance buffer, grown on write. Create once per crowd.
+  createInstances : r -> IO InstanceHandle
+
+  ||| Replace the buffer's contents with a filled slice and remember its
+  ||| count: one upload per change, typically per frame.
+  writeInstances : r -> InstanceHandle -> InstSlice -> IO ()
+
+  ||| Draw one triangle mesh once *per instance in the buffer*, in a single
+  ||| call: mesh attributes at vertex rate, the instance matrix and colour
+  ||| at instance rate, `Mat4` the whole batch's transform (`o.model`).
+  ||| The material must declare its instanced entry -- `InstOk`, proved at
+  ||| compile time, offler's spelling of bevy's automatic batching.
+  ||| Instanced draws run in the opaque phase: a batch cannot be
+  ||| depth-sorted within itself, which is bevy's limitation too.
+  drawInstanced : Material m => r -> (1 frame : f)
+               -> MeshHandle Triangles -> Handle m -> InstanceHandle
+               -> Mat4 -> {auto 0 inst : InstOk m} -> L1 IO f
 
   ||| Finish the frame: record the sorted transparent phase, and submit.
   ||| Consumes the token.

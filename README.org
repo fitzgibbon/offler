@@ -46,14 +46,14 @@ navigating with =?r=webgpu=.
 |------------+---------------+--------------------------------------------------------------------------|
 | =Shapes=   | =shapes.html= | bevy's =3d_shapes= as a retained scene graph: eleven nodes over material assets, an *indexed* torus, a =Blend= glass shape, the PNG uv-checker back row, a JPEG ground, two directional lights |
 | =Lines=    | =lines.html=  | both gizmo modes: the globe and grid are *retained* gizmo assets (=Lines= meshes spun by node transforms, =TopoOk=-gated); the ribbon is *immediate* =GizmoData= rebuilt per frame with a hue gradient along its length, plus an RGB axes marker |
-| =Swarm=    | =swarm.html=  | what retained materials buy at scale: 10 000 bodies share two dozen hue-bucketed assets, so a frame writes only model matrices — one =drawMany= per bucket, 58 fps at the cap on hardware GL |
+| =Swarm=    | =swarm.html=  | *one instanced draw* for the whole crowd: 50 000 bodies (to 200 000 with =+=) stream their model matrix and hue at instance rate against a single material asset — =drawInstanced=, gated by =InstOk= at compile time |
 | =Custom=   | =custom.html= | a user-defined material, end to end: a scanline hologram implementing the =Material= interface with its own WGSL and GLSL, =Blend=-composited through =Mask= cutout panels, all as scene-graph nodes over assets |
 | =Flat2d=   | =flat2d.html= | the 2D mode: forty sprite nodes under an orthographic camera, unlit assets, a frame is forty =setTransform=s |
 
 All five are verified rendering natively under Xvfb + lavapipe
 (=scripts/headless-shot.sh=), and in the browser on *both* backends: WebGL2
-at 58 fps on hardware GL (the swarm at the full 10 000 with no stack
-growth), and — new since the orrery, whose notes record headless WebGPU as
+at 58 fps on hardware GL (the swarm at 50 000 bodies in one instanced
+call), and — new since the orrery, whose notes record headless WebGPU as
 presenting only a white canvas — browser WebGPU visually confirmed in
 headless Chrome 151 under SwiftShader, screenshots and all, driven over CDP
 with =--enable-unsafe-webgpu --enable-unsafe-swiftshader=.
@@ -97,7 +97,7 @@ desktop adds.
     rendererName      : r -> String
     createMesh        : {t : Topology} -> r -> Verts t -> IO (MeshHandle t)
     createMeshIndexed : r -> Verts Triangles -> Indices -> IO (MeshHandle Triangles)
-    freeMesh          : r -> MeshHandle t -> IO ()   -- stale handles then draw nothing
+    freeMesh          : r -> MeshHandle t -> IO ()   -- index recycled; stale handles draw nothing
     loadTexture       : r -> TextureSource -> IO TextureHandle    -- immediate; white until decoded
     registerMaterial  : Material m => r -> ...proofs... -> IO (MaterialId m)
     addMaterial       : Material m => r -> MaterialId m -> m -> IO (Handle m)
@@ -109,6 +109,10 @@ desktop adds.
                      -> {auto 0 ok : TopoOk t m} -> L1 IO f
     drawMany          : Material m => r -> (1 frame : f) -> MeshHandle t -> Handle m -> List Mat4
                      -> {auto 0 ok : TopoOk t m} -> L1 IO f
+    createInstances   : r -> IO InstanceHandle       -- a GPU instance buffer, grown on write
+    writeInstances    : r -> InstanceHandle -> InstSlice -> IO ()
+    drawInstanced     : Material m => r -> (1 frame : f) -> MeshHandle Triangles -> Handle m
+                     -> InstanceHandle -> Mat4 -> {auto 0 inst : InstOk m} -> L1 IO f
     drawGizmos        : r -> (1 frame : f) -> L1 IO f
     endFrame          : r -> (1 frame : f) -> L IO ()
 
@@ -181,6 +185,7 @@ by mechanism:
 | pipeline specialisation per mesh key  | pipeline variants per (topology × alpha phase), the variant *chosen by the type checker*; a line mesh with a material lacking =vs_line= is a missing =So=, not a runtime error (=TopoOk=) |
 | =Indices= / indexed meshes            | =createMeshIndexed=: shared vertices named by a u32 list |
 | =bevy_transform= + =bevy_hierarchy=   | =Offler.Scene=: a retained tree, =Transform= per node, propagation to world matrices |
+| automatic batching / GPU instancing   | =drawInstanced=: model matrix + colour at instance rate against one material asset, one call per crowd; the material's =vs_inst= entry is demanded by =InstOk= at compile time where bevy's batcher decides at runtime |
 | =bevy_gizmos= (immediate)             | =Offler.Gizmos=: =gLine=/=gArrow=/=gAxes=/=gCircle=/=gSphere=/=gCuboid=/=gGrid= over pure =GizmoData=; =drawGizmoData= + =drawGizmos= render the frame's worth, per-vertex coloured, in one blended call |
 | =GizmoAsset= + =Gizmo= (retained, 0.14) | =gizmoAsset=: freeze =GizmoData= into a =Lines= mesh drawn by =GizmoMaterial= (an ordinary =Material= whose =vs_line= keeps the per-vertex colours; the tint is the =Gizmo= config), spawn the =Drawable= as a scene node, move it by transform. =retainGizmos= gives the bare mesh for a custom material's =vs_line= |
 
@@ -260,9 +265,10 @@ ill-topologied node cannot even be built.
 
 There is no dirty tracking: propagation is a full multiply-down per frame,
 which at scene-graph granularity (dozens to hundreds of nodes) is nothing.
-Crowds do not belong in a graph -- the Swarm example keeps its ten
-thousand bodies in flat lists and draws them with =drawMany=, which is
-also bevy's shape for that (one material asset, many instances).
+Crowds do not belong in a graph -- the Swarm example keeps its fifty
+thousand bodies in a flat list and draws them with =drawInstanced=,
+which is how bevy renders crowds too (one material asset, one instanced
+call).
 
 * Retained materials
 
@@ -271,9 +277,8 @@ of the material buffer and, on the WebGPU-flavoured backends, a cached
 bind group -- both made at =addMaterial=, when =writeMat= runs and the
 block is uploaded. After that, drawing with the handle costs no material
 work at all: a draw writes the engine block (model matrix, alpha lane)
-and one foreign call. The measurable consequence: the 10 000-body swarm
-runs at 58 fps on hardware WebGL2, because a frame's uploads are one
-object-buffer prefix and nothing else.
+and one foreign call. The measurable consequence: a frame's uploads are
+one prefix per touched object-buffer page and nothing else.
 
 Alpha phase rides in the handle (an asset is immutable; =updateMaterial=
 refills the slot and mints a fresh handle), =Mask= discards in-shader via
@@ -290,8 +295,8 @@ orrery measured, kept here: *linear tokens sit at resource boundaries and
 are never threaded through a per-item loop.* =runK='s recursion is not a
 self tail call, so each bind costs a stack frame on the JS backend and
 overflows between 8 000 and 10 000 binds — hence =drawMany=, which loops
-inside one lifted =IO= action. The swarm example runs 10 000 bodies in the
-browser as the regression test for exactly that.
+inside one lifted =IO= action -- and =Checks/StackCheck.idr= holds the
+trampoline property in place directly.
 
 * One description of the GPU contract
 
@@ -446,34 +451,41 @@ window. The script encodes the two traps: SDL3 prefers Wayland whenever
   metallic-roughness / emissive maps — more slots are one =matTextureSlots=
   entry each, but the standard shader only samples one. At most 4 texture
   slots per material (the C FFI's fixed arity, proved at registration).
-- A =drawMany= batch is one material asset and many matrices -- per-item
-  colour inside one batch means bucketed assets (as the Swarm does) or,
-  eventually, instance data.
+- A =drawMany= batch is one material asset and many matrices; per-item
+  colour wants =drawInstanced=, whose instance stream carries a colour
+  beside each matrix.
 - Transparent draws sort by object centre, the classic approximation;
   intersecting geometry can still composite wrongly, as in bevy.
 - Directional lights only (four), no point/spot, no shadows.
-- Every object is still a draw call (at most one bind); instancing from
-  storage buffers is the known next step for the swarm's ceiling, exactly as
-  the orrery's notes conclude.
-- The per-frame draw cap is =maxObjects = 10240= slots of 256 bytes, in each
-  of the object and material buffers.
-- Meshes can be released with =freeMesh=: the GPU buffers go, the table
-  entry becomes a tombstone, and draws against stale handles are silent
-  no-ops -- the honest runtime seam, since unrestricted handles cannot make
-  use-after-free a type error the way the linear frame token can (bevy
-  frees on refcount for the same reason). Textures and material assets are
-  still permanent: their views live inside cached bind groups, so freeing
-  them needs the =texGen= rebuild machinery extended, not just a delete.
-  Assets share the 10 240-slot budget.
+- Instanced draws run in the opaque phase: a batch cannot be depth-sorted
+  within itself (bevy's batches have the same limitation), so =Blend=
+  materials want per-node draws.
+- There is no per-frame draw ceiling: the object and material buffers are
+  *paged*, =maxObjects= (10 240) slots of 256 bytes per page, pages made
+  the first time a slot on them is used. =drawMany= chunks batches at page
+  boundaries; =endFrame= uploads one prefix per touched page. The
+  instance path bypasses object slots entirely -- a 50 000-body crowd
+  spends one.
+- Meshes can be released with =freeMesh=: the GPU buffers go, the index
+  returns to a free list, and the entry's *generation* bumps -- handles
+  carry the generation they were minted at, so a stale handle (even one
+  whose index has been recycled) draws nothing rather than someone else's
+  mesh. Nothing leaks and nothing dangles; the check is one integer
+  compare per draw. Unrestricted handles cannot make use-after-free a
+  type error the way the linear frame token can -- bevy frees on refcount
+  for the same reason. Textures and material assets are still permanent:
+  their views live inside cached bind groups, so freeing them needs the
+  =texGen= rebuild machinery extended, not just a delete.
 - =Escape= closing the native window is platform policy, not scene code.
 
 * Testing
 
-- =make check= — nine programs that must fail to compile, each asserting
+- =make check= — ten programs that must fail to compile, each asserting
   /why/ it was rejected (a linearity error, a private constructor, a =So=
   bound, a stride mismatch, an oversized material block, a =MaterialId=
   paired with the wrong material type, a line mesh drawn with a material
-  that has no line entry points). A negative test that does not say
+  that has no line entry points, an instanced draw against a material
+  with no instanced entry). A negative test that does not say
   why is not a test: the orrery's first version passed vacuously on
   misnamed modules.
 - =Checks/StackCheck.idr=, run by =make check= — the other kind of

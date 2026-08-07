@@ -13,6 +13,7 @@ struct VsOut {
   @location(1) world : vec3<f32>,
   @location(2) obj   : vec3<f32>,
   @location(3) uv    : vec2<f32>,
+  @location(4) icol  : vec4<f32>,
 };
 
 // Line meshes: the standard material draws them as their
@@ -26,6 +27,7 @@ fn vs_line(v : LineIn) -> VsOut {
   out.obj = v.pos.xyz;
   out.nrm = vec3<f32>(0.0, 1.0, 0.0);
   out.uv = vec2<f32>(0.0, 0.0);
+  out.icol = vec4<f32>(1.0);
   out.pos = g.proj * g.view * world;
   return out;
 }
@@ -41,6 +43,24 @@ fn vs(v : VertexIn) -> VsOut {
   // Approximate for non-uniform scale; exact for rigid-plus-uniform.
   out.nrm = (o.model * vec4<f32>(v.normal, 0.0)).xyz;
   out.uv = v.uv;
+  out.icol = vec4<f32>(1.0);
+  out.pos = g.proj * g.view * world;
+  return out;
+}
+
+// Instanced meshes: the model matrix streams as four vec4 columns and the
+// colour as icolor, at instance rate; o.model is the whole batch's
+// transform, and the instance colour multiplies the base colour in fs.
+@vertex
+fn vs_inst(v : InstIn) -> VsOut {
+  var out : VsOut;
+  let model = o.model * mat4x4<f32>(v.im0, v.im1, v.im2, v.im3);
+  let world = model * vec4<f32>(v.pos, 1.0);
+  out.world = world.xyz;
+  out.obj = v.pos;
+  out.nrm = (model * vec4<f32>(v.normal, 0.0)).xyz;
+  out.uv = v.uv;
+  out.icol = v.icolor;
   out.pos = g.proj * g.view * world;
   return out;
 }
@@ -96,7 +116,7 @@ fn fs(in : VsOut) -> @location(0) vec4<f32> {
   // The default binding is the renderer's 1x1 white, so an unmapped
   // material multiplies by one.
   let texel = textureSample(t_base_color, s_base_color, in.uv);
-  let base4 = m.baseColor * texel;
+  let base4 = m.baseColor * texel * in.icol;
   let base = base4.rgb * patternFactor(in.obj);
 
   // Unlit: the (patterned, textured) base colour exactly. First, so lines
