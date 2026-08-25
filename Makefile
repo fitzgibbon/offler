@@ -87,7 +87,7 @@ lib: Offler/Shaders.idr Offler/Gfx/Config.idr
 # at exactly the object cap, on the backend where the stack is scarcest --
 # plus a grep of the generated output for the trampoline it depends on,
 # because whether a loop got `__tailRec` is visible nowhere in the source.
-check: stackcheck
+check: stackcheck globalscheck uploadcheck
 	@fail=0; for t in Tests/*.idr; do \
 	  want=$$(sed -n 's/^-- expect: //p' "$$t" | head -1); \
 	  if [ -z "$$want" ]; then \
@@ -103,6 +103,32 @@ check: stackcheck
 	    echo "ok    $$t rejected: $$want"; \
 	  fi; \
 	done; exit $$fail
+
+# The frame globals are written at hand-written literal offsets (the light
+# slots are unrolled, so every bound is a proof rather than a test). Nothing
+# in the source says those literals agree with `Offler.Gfx.Layout`, so this
+# writes a known frame and reads every field back.
+.PHONY: globalscheck
+globalscheck: Offler/Shaders.idr Offler/Gfx/Config.idr
+	@$(IDRIS) -p linear --cg node -o globalscheck Checks/GlobalsCheck.idr > /dev/null
+	@out=$$(node $(EXEC)/globalscheck | tr -d '\n'); \
+	  want='cam+time [1, 2, 3, 7]counts   [2, 0.25]dirs     [0, -1, 0, 1, 0, 0, 0, 0]'; \
+	  case "$$out" in \
+	    "$$want"*) echo "ok    Checks/GlobalsCheck.idr: globals land at the layout's offsets";; \
+	    *) echo "FAIL  GlobalsCheck said '$$out'"; exit 1;; \
+	  esac
+
+# The proof-carrying upload loops recurse per element in `PrimIO`
+# world-on-LHS form; losing that form overflows V8 past ~65 000 elements
+# with nothing in the source to say so. 100 000 segments and triangles,
+# with a nonzero sentinel read back from the buffer's final vertex.
+.PHONY: uploadcheck
+uploadcheck: Offler/Shaders.idr Offler/Gfx/Config.idr
+	@$(IDRIS) -p linear --cg node -o uploadcheck Checks/UploadCheck.idr > /dev/null
+	@out=$$(node $(EXEC)/uploadcheck); \
+	  if [ "$$out" != "lines 200000 mesh 300000 lastY 1" ]; then \
+	    echo "FAIL  UploadCheck said '$$out'"; exit 1; \
+	  else echo "ok    Checks/UploadCheck.idr: $$out"; fi
 
 .PHONY: stackcheck
 stackcheck: Offler/Shaders.idr Offler/Gfx/Config.idr

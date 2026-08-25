@@ -1,6 +1,6 @@
 ||| Must NOT compile: the frame globals are 72 floats, so a mat4 written at
 ||| offset 60 would run four floats past the end. `here` demands the bound.
--- expect: Can't find an implementation for So
+-- expect: Can't find an implementation for LTE (plus 60 16) globalFloatsN
 module Tests.OverrunGlobals
 import Offler.Gfx.Array
 import Offler.Gfx.Uniform

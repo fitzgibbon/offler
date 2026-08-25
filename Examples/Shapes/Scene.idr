@@ -104,7 +104,7 @@ run r p status = do
   -- The scene: a ground node and ten shape nodes.
   sc <- newScene
   _ <- spawn sc Nothing neutral (Just (MkDrawable ground groundH))
-  let rows = [(0, frontHs), (1, backHs)]
+  let rows = the (List (Int, List (Handle StandardMaterial))) [(0, frontHs), (1, backHs)]
   animated <- traverse (\(row, hs) =>
                  traverse (\(i, mesh, h) => do
                      n <- spawn sc Nothing (shapeTransform 0.0 row i count)

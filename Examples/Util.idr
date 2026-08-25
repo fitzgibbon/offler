@@ -40,14 +40,15 @@ reportFps status fps t = do
 
 ||| Build and upload a triangle-soup primitive in one step.
 export
-loadMesh : Renderer r f => r -> MeshData -> IO (MeshHandle Triangles)
+loadMesh : Renderer r f => r -> {n : Nat} -> MeshData n -> IO (MeshHandle Triangles)
 loadMesh r md = do
   buf <- uploadMesh md
   createMesh r buf.handle
 
 ||| Build and upload an indexed mesh in one step.
 export
-loadIndexed : Renderer r f => r -> (List Vertex, List Int)
+loadIndexed : Renderer r f => r -> {n : Nat}
+           -> (Vect n Vertex, Vect k (Fin n))
            -> IO (MeshHandle Triangles)
 loadIndexed r (vs, is) = do
   (buf, ix) <- uploadIndexed vs is

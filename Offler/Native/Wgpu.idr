@@ -139,7 +139,7 @@ initWgpu title = do
       os <- newPaged
       ms <- newObjScratch
       ef <- newIORef (zero3, MkV3 0.0 0.0 (-1.0))
-      ac <- newIORef 0
+      ac <- newIORef (the Int 0)
       pure (Just (MkWgpu c gs os ms ef ac))
 
 ||| The slot counter, held in the linear token: failure to acquire a surface

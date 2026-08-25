@@ -11,20 +11,47 @@
 ||| exists for the type checker, and an `F32Array n` is still a pointer and a
 ||| length at run time. What it buys is that a position checked against one
 ||| array cannot be used to write into a smaller one.
+|||
+||| The capacity is a `Nat`, not an `Int`, and that is the whole reason the
+||| upload loops can prove their writes rather than test them. `So` over a
+||| symbolic `Int` never reduces -- not even `So (i <= i)` -- because
+||| `prim__lte_Int` is opaque, so a computed offset could only ever be
+||| checked at run time, with an unreachable failure branch to answer for.
+||| At `Nat` the same bound is an ordinary `LTE`, discharged at multiplicity
+||| 0. Offsets stay `Int`: they cross the FFI, and nothing is proved about
+||| them once the position exists.
 module Offler.Gfx.Array
 
--- Re-exported: every caller of `here` or `sub` needs `Oh` in scope for the
--- bound to be discharged by proof search.
+-- Re-exported: every caller of `here` or `sub` needs the bound discharged
+-- by proof search, which is `Data.Nat`'s `LTE` now rather than `So` over
+-- `Int`. `Data.So` stays re-exported for `Offler.Gfx.Material`'s `FitsSlot`.
+import public Data.Nat
 import public Data.So
 
 import Offler.Gfx.Layout
 
 %default total
 
+||| Float widths, bound as names rather than written as literals in the
+||| signatures below. With a bare `Nat` literal in `poke16`'s sixteen-argument
+||| type the elaborator goes superlinear and never finishes; naming the width
+||| costs nothing and it reads better besides.
+public export
+scalarFloats : Nat
+scalarFloats = 1
+
+public export
+vec4Floats : Nat
+vec4Floats = 4
+
+public export
+mat4Floats : Nat
+mat4Floats = 16
+
 ||| Opaque so a vertex buffer cannot be confused with any other foreign handle,
 ||| and indexed so its capacity travels with it.
 export
-data F32Array : (0 cap : Int) -> Type where
+data F32Array : (0 cap : Nat) -> Type where
   MkF32 : AnyPtr -> (len : Int) -> F32Array cap
 
 ||| Escape hatch for backends that hand the array to their own foreign calls.
@@ -44,15 +71,24 @@ capacity (MkF32 _ n) = n
 ||| One `Int` field and one constructor, so Idris's newtype optimisation leaves
 ||| nothing of it at run time: an `At` is the offset.
 export
-data At : (0 cap : Int) -> (0 w : Int) -> Type where
+data At : (0 cap : Nat) -> (0 w : Nat) -> Type where
   MkAt : Int -> At cap w
 
 ||| A literal offset into a known capacity. The bound is discharged by proof
 ||| search at multiplicity 0, so this costs nothing at all and an offset that
 ||| does not fit is a compile error.
 export %inline
-here : (i : Int) -> {auto 0 ok : So (i + w <= cap)} -> At cap w
-here i = MkAt i
+here : (i : Nat) -> {auto 0 ok : LTE (i + w) cap} -> At cap w
+here i = MkAt (cast i)
+
+||| A position proved rather than tested, for a *computed* index: element
+||| `i` of a run of `n`, each `w` floats wide, in a buffer of exactly
+||| `n * w`. This is what an upload loop uses instead of `window`, and it
+||| is why those loops no longer have a failure branch that cannot happen.
+export %inline
+strided : {w : Nat} -> (i : Nat) -> {0 n : Nat} -> (0 ok : LT i n)
+       -> At (n * w) w
+strided i _ = MkAt (cast i * cast w)
 
 ||| A computed offset: one comparison, made here so that no caller can make it
 ||| somewhere else, differently, or not at all. `Nothing` means the write would
@@ -65,14 +101,16 @@ here i = MkAt i
 ||| non-negative `n` and `w`, and goes negative when the array is smaller than
 ||| the write, which no non-negative `i` matches.
 export
-window : {w : Int} -> F32Array cap -> (i : Int) -> Maybe (At cap w)
-window (MkF32 _ n) i = if i >= 0 && i <= n - w then Just (MkAt i) else Nothing
+window : {w : Nat} -> F32Array cap -> (i : Int) -> Maybe (At cap w)
+window (MkF32 _ n) i =
+  let wi = the Int (cast w)
+   in if i >= 0 && i <= n - wi then Just (MkAt i) else Nothing
 
 ||| Step `k` floats into a window, keeping `w'` of it. Arithmetic on a bound
 ||| already established, not a second check, so this is free too.
 export %inline
-sub : (k : Int) -> At cap w -> {auto 0 ok : So (k + w' <= w)} -> At cap w'
-sub k (MkAt i) = MkAt (i + k)
+sub : (k : Nat) -> At cap w -> {auto 0 ok : LTE (k + w') w} -> At cap w'
+sub k (MkAt i) = MkAt (i + cast k)
 
 ||| The offset a position names. There is no route back from an `Int` to an
 ||| `At` that skips the bound -- except the one named `unsafeAt`, below.
@@ -120,19 +158,20 @@ prim__poke16 : AnyPtr -> Int -> Double -> Double -> Double -> Double -> Double -
 prim__peek : AnyPtr -> Int -> PrimIO Double
 
 export
-newF32 : (n : Int) -> IO (F32Array n)
-newF32 n = (\p => MkF32 p n) <$> primIO (prim__new n)
+newF32 : (n : Nat) -> IO (F32Array n)
+newF32 n = let ni = the Int (cast n)
+            in (\p => MkF32 p ni) <$> primIO (prim__new ni)
 
 export
-poke : F32Array cap -> At cap 1 -> Double -> IO ()
+poke : F32Array cap -> At cap Offler.Gfx.Array.scalarFloats -> Double -> IO ()
 poke a (MkAt i) v = primIO (prim__poke (raw a) i v)
 
 export
-poke4 : F32Array cap -> At cap 4 -> Double -> Double -> Double -> Double -> IO ()
+poke4 : F32Array cap -> At cap Offler.Gfx.Array.vec4Floats -> Double -> Double -> Double -> Double -> IO ()
 poke4 a (MkAt o) x y z w = primIO (prim__poke4 (raw a) o x y z w)
 
 export
-poke16 : F32Array cap -> At cap 16
+poke16 : F32Array cap -> At cap Offler.Gfx.Array.mat4Floats
        -> Double -> Double -> Double -> Double
        -> Double -> Double -> Double -> Double
        -> Double -> Double -> Double -> Double
@@ -141,7 +180,7 @@ poke16 a (MkAt o) x0 x1 x2 x3 x4 x5 x6 x7 x8 x9 x10 x11 x12 x13 x14 x15 =
   primIO (prim__poke16 (raw a) o x0 x1 x2 x3 x4 x5 x6 x7 x8 x9 x10 x11 x12 x13 x14 x15)
 
 export
-peek : F32Array cap -> At cap 1 -> IO Double
+peek : F32Array cap -> At cap Offler.Gfx.Array.scalarFloats -> IO Double
 peek a (MkAt i) = primIO (prim__peek (raw a) i)
 
 --------------------------------------------------------------------------------
@@ -165,7 +204,7 @@ data Verts : (0 t : Topology) -> Type where
 public export
 record VertBuf (0 t : Topology) where
   constructor MkVertBuf
-  0 bufCap : Int
+  0 bufCap : Nat
   arr : F32Array bufCap
   ||| What `createMesh` takes. Nothing can be written through it.
   handle : Verts t
@@ -178,13 +217,29 @@ record VertBuf (0 t : Topology) where
 ||| that cannot happen and no way to say so. Allocating and counting together
 ||| removes the disagreement instead of detecting it: there is one number,
 ||| used twice, here.
+||| Allocate for exactly `count` vertices of a topology and pair the array
+||| with its count in one step. The capacity is `count * floatsOfN t`
+||| *exactly* -- not `max 1` of it -- because that is the number an upload
+||| loop's `strided` bound is stated against. A zero-vertex mesh therefore
+||| gets a zero-length array, which nothing writes to.
+||| As `newVerts`, but keeping the capacity in the array's type: what the
+||| proof-carrying upload loops need, since `VertBuf`'s field is existential
+||| and forgets the tie to the count. The `Verts` constructor stays private:
+||| allocation and count still happen in one step, here.
 export
-newVerts : {t : Topology} -> (count : Int) -> IO (VertBuf t)
+newVertsAt : {t : Topology} -> (count : Nat)
+          -> IO (F32Array (count * floatsOfN t), Verts t)
+newVertsAt count = do
+  a <- newF32 (count * floatsOfN t)
+  pure (a, MkVerts (raw a) (cast count) (cast (count * floatsOfN t)))
+
+export
+newVerts : {t : Topology} -> (count : Nat) -> IO (VertBuf t)
 newVerts count =
-  let n = max 0 count
-      floats = n * floatsOf t
-   in do a <- newF32 (max 1 floats)
-         pure (MkVertBuf (max 1 floats) a (MkVerts (raw a) n floats))
+  let floats = count * floatsOfN t
+      fi = the Int (cast floats)
+   in do a <- newF32 floats
+         pure (MkVertBuf floats a (MkVerts (raw a) (cast count) fi))
 
 export %inline
 vertsRaw : Verts t -> AnyPtr

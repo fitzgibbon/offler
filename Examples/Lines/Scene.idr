@@ -16,7 +16,10 @@ import Offler.Gfx.Platform
 import Offler.Gfx.Renderer
 import Offler.Light
 import Offler.Material
+import Data.Vect
+
 import Offler.Math
+import Offler.Vect
 import Offler.Mesh
 import Offler.Scene
 import Offler.Transform
@@ -36,13 +39,14 @@ lights = defaultLights
 
 ||| The globe's edges, in *object* space (the node's transform spins it),
 ||| hue by latitude: colour that survives retention.
-globeSegments : GizmoData
+globeSegments : GizmoData (faceCount 2 * 3)
 globeSegments =
-  concatMap (\(a, b, c) =>
-      [ seg a.position b.position
-      , seg b.position c.position
-      , seg c.position a.position ])
-    (sphere 1.6 2)
+  concatV (mapV (\(a, b, c) =>
+      the (Vect 3 (V3, V3, Color))
+        [ seg a.position b.position
+        , seg b.position c.position
+        , seg c.position a.position ])
+    (sphere 1.6 2))
   where
     hueAt : V3 -> Color
     hueAt v = withAlpha 0.5 (hsl (0.5 + 0.14 * v.vy / 1.6) 0.7 0.66)
@@ -58,13 +62,12 @@ ribbonPoint t s =
 
 ||| The ribbon as immediate gizmos, hue drifting along its length: the
 ||| per-vertex colour the overlay draws in one call.
-ribbon : Double -> GizmoData
+ribbon : Double -> GizmoData (240 * 1)
 ribbon t =
-  concatMap (\k =>
-      let s0 = cast k * (tau / 240.0)
-          c = withAlpha 0.7 (hsl (0.55 + 0.25 * sin (s0 + t * 0.1)) 0.8 0.6)
-       in gLine c (ribbonPoint t s0) (ribbonPoint t (s0 + tau / 240.0)))
-    (range 0 239)
+  tabulateFlat 240 $ \k =>
+    let s0 = cast k * (tau / 240.0)
+        c = withAlpha 0.7 (hsl (0.55 + 0.25 * sin (s0 + t * 0.1)) 0.8 0.6)
+     in gLine c (ribbonPoint t s0) (ribbonPoint t (s0 + tau / 240.0))
 
 markerTransform : Double -> Double -> Transform
 markerTransform t phase =
@@ -85,7 +88,7 @@ frame r p sc globe m1 m2 fps status t = do
     setTransform sc m2 (markerTransform t 3.1)
     -- The immediate overlay is the one thing rebuilt per frame: its
     -- geometry actually changes. Uploaded outside the pass.
-    drawGizmoData r (ribbon t ++ gAxes zero3 1.2)
+    drawGizmoData r (some (ribbon t) <+> some (gAxes zero3 1.2))
   Just fr <- beginFrame r (camera t) lights t
     | Nothing => pure ()
   fr1 <- renderScene r fr sc
@@ -100,8 +103,8 @@ run r p status = do
   gm <- registerGizmos r
   -- Retained gizmo assets: geometry frozen once, animated by transform.
   -- White tint keeps the globe's own hues; the grid fades by tint alpha.
-  globeD <- gizmoAsset r gm white globeSegments
-  gridD <- gizmoAsset r gm (srgba 1.0 1.0 1.0 0.35) (gGrid white (the Int 8) 1.0)
+  globeD <- gizmoAsset r gm white (some globeSegments)
+  gridD <- gizmoAsset r gm (srgba 1.0 1.0 1.0 0.35) (some (gGrid white 8 1.0))
   markerMesh <- loadMesh r (sphere 1.0 2)
   markerH <- addMaterial r mid (glowing (dim 2.5 (rgb 1.0 0.62 0.25)))
   sc <- newScene

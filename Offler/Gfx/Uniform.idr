@@ -10,6 +10,12 @@
 ||| through two independent dynamic offsets.
 module Offler.Gfx.Uniform
 
+-- Re-exported: every material's `writeMat` names a lane, so `Fin` and its
+-- `Num` instance must be in scope wherever one is written -- the same
+-- reasoning as `Offler.Gfx.Array`'s re-export of `Data.So`.
+import public Data.Fin
+import public Data.Vect
+
 import Data.IORef
 import Data.List
 import Offler.Camera
@@ -17,33 +23,36 @@ import Offler.Color
 import Offler.Gfx.Array
 import Offler.Gfx.Config
 import Offler.Gfx.Layout
+import public Offler.Gfx.Scratch
 import Offler.Light
 import Offler.Math
 
 %default total
 
+-- `pokeGlobals` discharges `here` bounds up to `LTE 72 72`, a proof-search
+-- chain deeper than the default auto-implicit depth of 50.
+%auto_implicit_depth 100
+
 ||| Floats in the frame-global scratch: exactly the block `Offler.Gfx.Layout`
 ||| lays out.
 public export
 GlobalScratch : Type
-GlobalScratch = F32Array Offler.Gfx.Layout.globalFloats
+GlobalScratch = F32Array Offler.Gfx.Layout.globalFloatsN
 
 export
 newGlobalScratch : IO GlobalScratch
-newGlobalScratch = newF32 globalFloats
+newGlobalScratch = newF32 globalFloatsN
 
 ||| One slot per draw, filled during the frame and uploaded in a single
 ||| write at the end. Writing per draw means one queue call each, which is
 ||| what made the orrery's WebGPU path far slower than WebGL2 at scale. The
 ||| same type serves the object buffer and the material buffer: both are
-||| `maxObjects` slots of `objStride` bytes.
-public export
-objScratchFloats : Int
-objScratchFloats = objFloats * maxObjects
-
+||| `maxObjects` slots of `objStride` bytes -- `objScratchFloats` floats,
+||| a capacity that lives in `Offler.Gfx.Scratch` behind an opaque boundary
+||| (see that module for why the elaborator must not see the value).
 public export
 ObjScratch : Type
-ObjScratch = F32Array Offler.Gfx.Uniform.objScratchFloats
+ObjScratch = F32Array Offler.Gfx.Scratch.objScratchFloats
 
 export
 newObjScratch : IO ObjScratch
@@ -56,7 +65,7 @@ newObjScratch = newF32 objScratchFloats
 ||| backends, and cannot be made against the wrong bound.
 export
 data Slot : Type where
-  MkSlot : At Offler.Gfx.Uniform.objScratchFloats Offler.Gfx.Layout.objFloats -> Slot
+  MkSlot : At Offler.Gfx.Scratch.objScratchFloats Offler.Gfx.Layout.objFloatsN -> Slot
 
 ||| One test, covering every use of the index. The scratches hold exactly
 ||| `objFloats * maxObjects` floats and the uniform buffers exactly
@@ -65,7 +74,7 @@ data Slot : Type where
 ||| dynamic offset the bind group will also accept.
 export
 slot : ObjScratch -> (i : Int) -> Maybe Slot
-slot a i = case window {w = objFloats} a (i * objFloats) of
+slot a i = case window {w = objFloatsN} a (i * objFloats) of
              Just o => Just (MkSlot o)
              Nothing => Nothing
 
@@ -92,7 +101,7 @@ pokeObject : ObjScratch -> Slot -> Mat4
           -> (laneX, laneY, laneZ, laneW : Double) -> IO ()
 pokeObject a (MkSlot o) model x y z w = do
   pokeMat a (sub 0 o) model
-  poke4 a (sub objLaneFloat o) x y z w
+  poke4 a (sub objLaneFloatN o) x y z w
 
 --------------------------------------------------------------------------------
 -- Paged slots
@@ -184,9 +193,9 @@ usedPages pg count = do
 ||| so `matFields` like `[baseColor Vec4, params Vec4]` sit at lanes 0 and 1.
 |||
 ||| The constructor is private: a writer exists only for the slot a backend
-||| is currently filling, so a material cannot write anywhere else. Each put
-||| is one bare comparison against the slot's sixteen lanes -- no `Maybe`,
-||| per the §8.1 measurement -- and an out-of-range lane is dropped.
+||| is currently filling, so a material cannot write anywhere else. The lane
+||| is a `Fin`, so it is in range by construction: there is no test to run
+||| and no out-of-range lane to drop silently.
 export
 data MatWriter : Type where
   MkMatWriter : ObjScratch -> (base : Int) -> MatWriter
@@ -196,32 +205,43 @@ export
 matWriter : ObjScratch -> Slot -> MatWriter
 matWriter a (MkSlot o) = MkMatWriter a (atOffset o)
 
-||| Sixteen 4-float lanes per 256-byte slot.
-lanesPerSlot : Int
+||| Sixteen 4-float lanes per 256-byte slot. The lane types below are `Fin`
+||| over this, so the bound is the argument's type rather than a test: there
+||| is no out-of-range lane to drop, and no silent all-zero uniform block
+||| when a material miscounts its own fields.
+public export
+lanesPerSlot : Nat
 lanesPerSlot = 16
 
-export
-putVec4 : MatWriter -> (lane : Int) -> (x, y, z, w : Double) -> IO ()
-putVec4 (MkMatWriter a base) lane x y z w =
-  when (lane >= 0 && lane < lanesPerSlot) $
-    poke4 a (unsafeAt (base + lane * 4)) x y z w
+0 lanesPerSlotOk : Offler.Gfx.Uniform.lanesPerSlot = 16
+lanesPerSlotOk = Refl
+
+||| The float offset of a lane within a slot.
+laneAt : Int -> Fin 16 -> Int
+laneAt base lane = base + cast (finToNat lane) * 4
 
 export
-putColor : MatWriter -> (lane : Int) -> Color -> IO ()
+putVec4 : MatWriter -> (lane : Fin 16) -> (x, y, z, w : Double) -> IO ()
+putVec4 (MkMatWriter a base) lane x y z w =
+  poke4 a (unsafeAt (laneAt base lane)) x y z w
+
+export
+putColor : MatWriter -> (lane : Fin 16) -> Color -> IO ()
 putColor w lane c = putVec4 w lane c.red c.green c.blue c.alpha
 
+||| A mat4 spans four consecutive lanes, so it may start at lane 12 at the
+||| latest -- which is what `Fin 13` says, rather than the `lane + 3 < 16`
+||| test it replaces.
 export
-putMat4 : MatWriter -> (lane : Int) -> Mat4 -> IO ()
+putMat4 : MatWriter -> (lane : Fin 13) -> Mat4 -> IO ()
 putMat4 (MkMatWriter a base) lane mat =
-  when (lane >= 0 && lane + 3 < lanesPerSlot) $
-    pokeMat a (unsafeAt (base + lane * 4)) mat
+  pokeMat a (unsafeAt (base + cast (finToNat lane) * 4)) mat
 
 ||| One float, at component `c` (0..3) of a lane.
 export
-putF : MatWriter -> (lane : Int) -> (c : Int) -> Double -> IO ()
+putF : MatWriter -> (lane : Fin 16) -> (c : Fin 4) -> Double -> IO ()
 putF (MkMatWriter a base) lane c v =
-  when (lane >= 0 && lane < lanesPerSlot && c >= 0 && c <= 3) $
-    poke a (unsafeAt (base + lane * 4 + c)) v
+  poke a (unsafeAt (laneAt base lane + cast (finToNat c))) v
 
 --------------------------------------------------------------------------------
 -- Batch filling
@@ -273,33 +293,41 @@ fillWith a first batch k =
 ||| to rewrite the projection's z row into [0,1] clip space, WebGL2 passes
 ||| `False` because GL wants [-1,1].
 |||
-||| The literal offsets are discharged at compile time; the per-light
-||| offsets are computed from a bounded index, one `window` test each on a
-||| once-per-frame path. The last colour lane sits exactly flush with the
-||| end: grow `globalFields` and this stops compiling rather than running
-||| off the buffer.
+||| Every offset here is a literal, so every bound is discharged at compile
+||| time and there is not a single run-time test left in this function. The
+||| four light slots are written out rather than looped over for exactly the
+||| reason `correctClipZ` writes out its four columns: a literal offset is a
+||| proof, where a loop counter is something to get wrong. `Lights` carries
+||| four slots by type, so there is nothing to truncate and nothing to skip.
 export
 pokeGlobals : GlobalScratch -> Camera -> (aspectRatio : Double) -> Lights
             -> (time : Double) -> (correctClip : Bool) -> IO ()
-pokeGlobals a cam aspectRatio lights t correct = do
+pokeGlobals a cam aspectRatio ls t correct = do
   pokeMat a (here 0) (projMatrix cam.projection aspectRatio)
   when correct (correctClipZ a (here 0))
   pokeMat a (here 16) (viewMatrix cam)
   let eye = eyeOf cam
-      ls = take (cast maxLights) lights.directionals
+      l0 = index 0 ls.directionals
+      l1 = index 1 ls.directionals
+      l2 = index 2 ls.directionals
+      l3 = index 3 ls.directionals
   poke4 a (here 32) eye.vx eye.vy eye.vz t
-  poke4 a (here 36) (cast (length ls)) lights.ambient 0.0 0.0
-  pokeLights 0 ls
+  poke4 a (here 36) (lightCount ls.directionals) ls.ambient 0.0 0.0
+  dir (here 40) l0; dir (here 44) l1; dir (here 48) l2; dir (here 52) l3
+  col (here 56) l0; col (here 60) l1; col (here 64) l2; col (here 68) l3
   where
-    pokeLights : Int -> List DirectionalLight -> IO ()
-    pokeLights _ [] = pure ()
-    pokeLights i (l :: rest) = do
-      let d = normalize3 l.direction
-          c = l.color
-      case window {w = 4} a (lightDirsFloat + i * 4) of
-        Just o => poke4 a o d.vx d.vy d.vz 0.0
-        Nothing => pure ()
-      case window {w = 4} a (lightColorsFloat + i * 4) of
-        Just o => poke4 a o c.red c.green c.blue 0.0
-        Nothing => pure ()
-      pokeLights (i + 1) rest
+    dir : At Offler.Gfx.Layout.globalFloatsN 4 -> Maybe DirectionalLight -> IO ()
+    dir o Nothing = poke4 a o 0.0 0.0 0.0 0.0
+    dir o (Just l) = let d = normalize3 l.direction
+                      in poke4 a o d.vx d.vy d.vz 0.0
+
+    col : At Offler.Gfx.Layout.globalFloatsN 4 -> Maybe DirectionalLight -> IO ()
+    col o Nothing = poke4 a o 0.0 0.0 0.0 0.0
+    col o (Just l) = let c = l.color
+                      in poke4 a o c.red c.green c.blue 0.0
+
+0 lightDirsFloatIsHere : Offler.Gfx.Layout.lightDirsFloat = 40
+lightDirsFloatIsHere = Refl
+
+0 lightColorsFloatIsHere : Offler.Gfx.Layout.lightColorsFloat = 56
+lightColorsFloatIsHere = Refl

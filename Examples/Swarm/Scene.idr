@@ -74,7 +74,7 @@ camera = perspectiveCamera
   (lookingAt zero3 (v3 0.0 1.0 0.0) (at (v3 0.0 7.5 14.5)))
 
 lights : Lights
-lights = MkLights 0.18 [MkDirectional (v3 (-0.3) (-1.0) (-0.25)) (rgb 1.0 0.95 0.9)]
+lights = Offler.Light.lights 0.18 [MkDirectional (v3 (-0.3) (-1.0) (-0.25)) (rgb 1.0 0.95 0.9)]
 
 maxBodies : Int
 maxBodies = 200000

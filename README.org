@@ -381,11 +381,25 @@ step is =slot=, a single comparison covering both the scratch bound and the
 dynamic offset, because =objFloats * 4 = objStride= is proved.
 
 What is deliberately /not/ guaranteed: two arrays of equal capacity remain
-interchangeable, and a computed index is tested rather than proved — =Int=
-is primitive, so its order theory would have to be postulated (the
-=Data.Int.Order= pattern), and multiplication monotonicity is missing there.
-Bounds arithmetic is written not to overflow (=i <= n - w=, never
-=i + w <= n=), which matters because =Int= is 32-bit on the JS backend.
+interchangeable. Computed indices split by path: the *load-time* loops
+(=uploadMesh=, =uploadLines=, =uploadIndexed=) now prove their writes — the
+capacity index is a =Nat=, so element =i= of =n= carries an =LT i n= that
+=strided= turns into a position, with no test and no silent-drop branch.
+The *per-frame* loops (=fillWith=, =fillInstances=) still test: their
+counters must stay =Int= (a live =Nat= counter is a BigInt on V8, measured
+at 1.75× on the fill loop), and =Int='s order theory is unprovable — =So
+(i <= i)= does not reduce for symbolic =i=. Bounds arithmetic is written
+not to overflow (=i <= n - w=, never =i + w <= n=), which matters because
+=Int= is 32-bit on the JS backend.
+
+Two elaborator hazards shape how the =Nat= capacities are spelled, both
+measured on 0.8.0: a closed =Nat= the size of a buffer normalizes to
+successor form at ~10s per 655k (linear, and ~12× worse inside a lifted
+=case= block), so the one big capacity lives behind =Offler.Gfx.Scratch='s
+non-public =export= — opaque to conversion, compared by name, 0.3s where
+the transparent spelling took 70. And =LTE= proof search is depth-limited
+at 50, so modules discharging =here= bounds past offset 50 raise
+=%auto_implicit_depth=.
 
 ** The run-time bounds tests, and turning them off
 

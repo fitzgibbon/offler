@@ -174,6 +174,19 @@ floatsOf : Topology -> Int
 floatsOf Triangles = 8
 floatsOf Lines = 8
 
+||| The same, as the `Nat` a buffer capacity is indexed by. Kept beside
+||| `floatsOf` with a proof they agree, rather than casting at each use.
+public export
+floatsOfN : Topology -> Nat
+floatsOfN Triangles = 8
+floatsOfN Lines = 8
+
+0 floatsNTrianglesOk : cast (Offler.Gfx.Layout.floatsOfN Triangles) = Offler.Gfx.Layout.floatsOf Triangles
+floatsNTrianglesOk = Refl
+
+0 floatsNLinesOk : cast (Offler.Gfx.Layout.floatsOfN Lines) = Offler.Gfx.Layout.floatsOf Lines
+floatsNLinesOk = Refl
+
 0 floatsTrianglesOk : Offler.Gfx.Layout.floatsOf Triangles * 4 = Offler.Gfx.Layout.strideOf Triangles
 floatsTrianglesOk = Refl
 
@@ -249,8 +262,8 @@ globalFields =
   , MkField "cam" Vec3
   , MkField "time" F32
   , MkField "counts" Vec4
-  , MkField "lightDirs" (Vec4Arr 4)
-  , MkField "lightColors" (Vec4Arr 4)
+  , MkField "lightDirs" (Vec4Arr maxLights)
+  , MkField "lightColors" (Vec4Arr maxLights)
   ]
 
 ||| The per-draw engine block, binding 1, picked out by a dynamic offset:
@@ -524,6 +537,15 @@ public export
 globalFloats : Int
 globalFloats = 72
 
+||| The capacity a `GlobalScratch` is indexed by. `Nat`, because that is
+||| what `F32Array` counts in and what its bounds are proved over.
+public export
+globalFloatsN : Nat
+globalFloatsN = 72
+
+0 globalFloatsNOk : cast Offler.Gfx.Layout.globalFloatsN = Offler.Gfx.Layout.globalFloats
+globalFloatsNOk = Refl
+
 0 globalFloatsOk : Offler.Gfx.Layout.globalFloats * 4 = Offler.Gfx.Layout.globalSize
 globalFloatsOk = Refl
 
@@ -581,6 +603,14 @@ public export
 objLaneFloat : Int
 objLaneFloat = 16
 
+||| The same, as the `Nat` that `sub` steps by.
+public export
+objLaneFloatN : Nat
+objLaneFloatN = 16
+
+0 objLaneFloatNOk : cast Offler.Gfx.Layout.objLaneFloatN = Offler.Gfx.Layout.objLaneFloat
+objLaneFloatNOk = Refl
+
 0 objLaneOk : Offler.Gfx.Layout.objLaneFloat * 4
             = Offler.Gfx.Layout.endAt 0 [MkField "model" Mat4]
 objLaneOk = Refl
@@ -602,6 +632,13 @@ public export
 objFloats : Int
 objFloats = 64
 
+public export
+objFloatsN : Nat
+objFloatsN = 64
+
+0 objFloatsNOk : cast Offler.Gfx.Layout.objFloatsN = Offler.Gfx.Layout.objFloats
+objFloatsNOk = Refl
+
 0 objFloatsOk : Offler.Gfx.Layout.objFloats * 4 = Offler.Gfx.Layout.objStride
 objFloatsOk = Refl
 
@@ -611,6 +648,13 @@ objFloatsOk = Refl
 public export
 maxObjects : Int
 maxObjects = 10240
+
+public export
+maxObjectsN : Nat
+maxObjectsN = 10240
+
+0 maxObjectsNOk : cast Offler.Gfx.Layout.maxObjectsN = Offler.Gfx.Layout.maxObjects
+maxObjectsNOk = Refl
 
 ||| The most texture slots a material may declare, which is what the C
 ||| shim's fixed-arity calls carry.

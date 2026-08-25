@@ -17,6 +17,7 @@ modules = Offler.App
         , Offler.Gfx.Material
         , Offler.Gfx.Platform
         , Offler.Gfx.Renderer
+        , Offler.Gfx.Scratch
         , Offler.Gfx.Uniform
         , Offler.Gizmos
         , Offler.Light
@@ -31,6 +32,7 @@ modules = Offler.App
         , Offler.Native.Wgpu
         , Offler.Shaders
         , Offler.Transform
+        , Offler.Vect
         , Offler.Web.App
         , Offler.Web.Audio
         , Offler.Web.Gl2

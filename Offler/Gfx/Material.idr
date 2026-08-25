@@ -20,6 +20,9 @@
 module Offler.Gfx.Material
 
 import public Data.So
+import public Data.Vect
+
+import Data.Nat
 
 -- Public: the registration bounds (`FitsSlot`, `FitsSlots`) expand to
 -- expressions over `structSize`, `objStride` and friends, which client
@@ -109,9 +112,15 @@ interface Material m where
   ||| from this; `writeMat` must fill it lane for lane.
   matFields : List Field
 
+  ||| How many texture slots this material declares. `matTextureSlots` and
+  ||| `matTextures` are both `Vect` over this, so a material cannot declare
+  ||| two slots and then hand back one texture -- which used to compile, and
+  ||| silently bound the renderer's white texture to the second slot.
+  matTexCount : Nat
+
   ||| Texture slot names, in binding order. Slot `i` appears to the shaders
   ||| as `t_<name>` (with `s_<name>` its WGSL sampler).
-  matTextureSlots : List String
+  matTextureSlots : Vect matTexCount String
 
   ||| The authored WGSL body: `vs` and `fs` entry points written against
   ||| the generated declarations (`VertexIn`, `g`, `o`, `m`, textures,
@@ -151,9 +160,10 @@ interface Material m where
   ||| Per-draw: how this value's alpha is honoured.
   alphaMode : m -> AlphaMode
 
-  ||| Per-draw: one entry per declared slot. `Nothing` binds the renderer's
-  ||| built-in 1x1 white texture, so an absent map multiplies by one.
-  matTextures : m -> List (Maybe TextureHandle)
+  ||| Per-draw: one entry per declared slot -- exactly `matTexCount` of them,
+  ||| which the type now enforces. `Nothing` binds the renderer's built-in
+  ||| 1x1 white texture, so an absent map multiplies by one.
+  matTextures : m -> Vect matTexCount (Maybe TextureHandle)
 
   ||| Per-draw: fill the uniform block, lane by 16-byte lane, matching
   ||| `matFields`.
@@ -171,9 +181,16 @@ public export
 0 FitsSlot : (0 m : Type) -> Material m => Type
 FitsSlot m = So (structSize (matFields {m}) <= objStride)
 
+||| The texture count fits the fixed bindings. A real `LTE` over the
+||| interface's own `Nat`, found by proof search -- where this was a `So`
+||| over a `Nat`-to-`Int` cast of a list length, which reduced only because
+||| every material's slot list happened to be a literal.
 public export
 0 FitsSlots : (0 m : Type) -> Material m => Type
-FitsSlots m = So (the Int (cast (length (matTextureSlots {m}))) <= maxTextureSlots)
+FitsSlots m = LTE (matTexCount {m}) 4
+
+0 maxTextureSlotsOk : Offler.Gfx.Layout.maxTextureSlots = 4
+maxTextureSlotsOk = Refl
 
 ||| Whether a material may draw a mesh of the given topology, decided by
 ||| reduction at the draw site: triangles always; lines only when the
@@ -245,7 +262,7 @@ handleBlend (MkHandle _ _ _ b) = b
 public export
 materialWgsl : Material m => String
 materialWgsl =
-  wgslMaterialPrologue (matFields {m}) (matTextureSlots {m}) ++ matWgsl {m}
+  wgslMaterialPrologue (matFields {m}) (toList (matTextureSlots {m})) ++ matWgsl {m}
 
 ||| The full GLSL stages.
 public export
@@ -263,19 +280,18 @@ materialGlslInstVert = glslMaterialInstVert (matFields {m}) (matGlslInstVert {m}
 public export
 materialGlslFrag : Material m => String
 materialGlslFrag =
-  glslMaterialFrag (matFields {m}) (matTextureSlots {m}) (matGlslFrag {m})
+  glslMaterialFrag (matFields {m}) (toList (matTextureSlots {m})) (matGlslFrag {m})
 
 ||| The bind group layout spec for this material's pipelines.
 public export
 materialSpec : Material m => String
-materialSpec =
-  materialBindSpec (matFields {m}) (cast (length (matTextureSlots {m})))
+materialSpec = materialBindSpec (matFields {m}) (cast (matTexCount {m}))
 
 ||| Texture slot names as one spec string, for the GL2 backend's sampler
 ||| binding.
 public export
 materialTexNames : Material m => String
-materialTexNames = joinSemi (matTextureSlots {m})
+materialTexNames = joinSemi (toList (matTextureSlots {m}))
 
 ||| The material block's byte size.
 public export
@@ -286,11 +302,23 @@ materialSize = structSize (matFields {m})
 ||| slots -- the fixed arity the C FFI wants. Backends substitute their
 ||| white texture for `-1` within the declared slot count.
 public export
+||| Padded to exactly four by `take 4` over the declared slots followed by
+||| four blanks, so there is no shorter-than-four case to answer for and no
+||| unreachable fallback branch.
 texIds : Material m => m -> (Int, Int, Int, Int)
-texIds v =
-  case map (maybe (-1) textureIndex) (matTextures v) ++ [-1, -1, -1, -1] of
-    (a :: b :: c :: d :: _) => (a, b, c, d)
-    _ => (-1, -1, -1, -1)
+texIds v = unpack (Data.Vect.take 4 padded)
+  where
+    blanks : Vect 4 Int
+    blanks = [-1, -1, -1, -1]
+
+    declared : Vect (matTexCount {m}) Int
+    declared = map (maybe (-1) textureIndex) (matTextures v)
+
+    padded : Vect (4 + matTexCount {m}) Int
+    padded = rewrite plusCommutative 4 (matTexCount {m}) in declared ++ blanks
+
+    unpack : Vect 4 Int -> (Int, Int, Int, Int)
+    unpack [a, b, c, d] = (a, b, c, d)
 
 ||| Fill a batch's object slots from `first` -- model matrices against one
 ||| retained material handle, whose lane data is constant across the batch.

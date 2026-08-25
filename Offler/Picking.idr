@@ -25,6 +25,7 @@ module Offler.Picking
 
 import Data.IORef
 import Data.List
+import Data.Vect
 import Offler.Camera
 import Offler.Gfx.Platform
 import Offler.Math
@@ -190,9 +191,14 @@ scaleOf m =
       (max (length3 (MkV3 m.m4 m.m5 m.m6))
            (length3 (MkV3 m.m8 m.m9 m.m10)))
 
-corners : V3 -> V3 -> List V3
+||| The eight corners of a box. `Vect 8` rather than `List`, so the caller
+||| below has no empty case to answer for: a box always has corners.
+corners : V3 -> V3 -> Vect 8 V3
 corners lo hi =
-  [MkV3 x y z | x <- [lo.vx, hi.vx], y <- [lo.vy, hi.vy], z <- [lo.vz, hi.vz]]
+  [ MkV3 lo.vx lo.vy lo.vz, MkV3 lo.vx lo.vy hi.vz
+  , MkV3 lo.vx hi.vy lo.vz, MkV3 lo.vx hi.vy hi.vz
+  , MkV3 hi.vx lo.vy lo.vz, MkV3 hi.vx lo.vy hi.vz
+  , MkV3 hi.vx hi.vy lo.vz, MkV3 hi.vx hi.vy hi.vz ]
 
 vmin : V3 -> V3 -> V3
 vmin (MkV3 a b c) (MkV3 d e f) = MkV3 (min a d) (min b e) (min c f)
@@ -207,9 +213,8 @@ rayVsTarget r t = case t.bound of
   BoundSphere c radius =>
     rayVsSphere r (mulPoint t.world c) (radius * scaleOf t.world)
   BoundBox lo hi =>
-    case map (mulPoint t.world) (corners lo hi) of
-      [] => Nothing
-      (p :: ps) => rayVsBox r (foldl vmin p ps) (foldl vmax p ps)
+    let (p :: ps) = map (mulPoint t.world) (corners lo hi)
+     in rayVsBox r (foldl vmin p ps) (foldl vmax p ps)
 
 ||| The backend proper: every target against one ray, nearest hit wins.
 public export

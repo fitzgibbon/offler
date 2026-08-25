@@ -227,8 +227,8 @@ initGpu canvasId k =
         os <- newPaged
         ms <- newObjScratch
         ef <- newIORef (zero3, MkV3 0.0 0.0 (-1.0))
-        ac <- newIORef 0
-        lc <- newIORef 0
+        ac <- newIORef (the Int 0)
+        lc <- newIORef (the Int 0)
         k (Just (MkGpu dev ctx canvas rt gbuf gs os ms depth ef ac lc))
 
 ||| The pass and the slot counter, held in the linear token: a draw cannot

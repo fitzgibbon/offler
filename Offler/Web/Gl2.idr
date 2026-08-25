@@ -183,7 +183,7 @@ initGl2 canvasId = do
   ms <- newObjScratch
   ignore (primIO (prim__attach rt (raw ms)))
   ef <- newIORef (zero3, MkV3 0.0 0.0 (-1.0))
-  MkGl2 gl canvas rt gs os ms ef <$> newIORef 0 <*> newIORef 0
+  MkGl2 gl canvas rt gs os ms ef <$> newIORef (the Int 0) <*> newIORef (the Int 0)
 
 ||| WebGL2 keeps no pass object, so the token is pure capability plus the
 ||| slot counter: it exists to be threaded, and its constructor never

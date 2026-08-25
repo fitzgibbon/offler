@@ -40,7 +40,7 @@ barHue i = cast i / cast barCount
 ||| A pentatonic step per bar, starting an octave below the sample's pitch.
 semisOf : Int -> Double
 semisOf i =
-  let step = case mod i 5 of
+  let step = the Int $ case mod i 5 of
                0 => 0
                1 => 2
                2 => 4
@@ -101,7 +101,7 @@ camera = perspectiveCamera
   (lookingAt zero3 (v3 0.0 1.0 0.0) (at (v3 0.0 5.2 11.5)))
 
 lights : Lights
-lights = MkLights 0.22 [MkDirectional (v3 (-0.35) (-1.0) (-0.3)) (rgb 1.0 0.96 0.9)]
+lights = Offler.Light.lights 0.22 [MkDirectional (v3 (-0.35) (-1.0) (-0.3)) (rgb 1.0 0.96 0.9)]
 
 --------------------------------------------------------------------------------
 -- Input
@@ -190,17 +190,17 @@ pollPads p au snd w t dt = do
 -- Drawing
 
 ||| Expanding, fading rings over each struck bar.
-rippleGizmos : Double -> List (Int, Double) -> GizmoData
-rippleGizmos t = concatMap ring
+rippleGizmos : Double -> List (Int, Double) -> Gizmos
+rippleGizmos t rs = gconcat (map ring rs)
   where
-    ring : (Int, Double) -> GizmoData
+    ring : (Int, Double) -> Gizmos
     ring (i, t0) =
       let age = (t - t0) / 1.2 in
-      if age >= 1.0 then [] else
+      if age >= 1.0 then noGizmos else
         let c = withAlpha ((1.0 - age) * 0.85) (hsl (barHue i) 0.75 0.7)
             centre = v3 (barX i) 0.06 0.0
-         in gCircle c centre (v3 0.0 1.0 0.0) (0.55 + 2.6 * age) 40
-         ++ gCircle c centre (v3 0.0 1.0 0.0) (0.35 + 2.6 * age * 0.8) 40
+         in some (gCircle c centre (v3 0.0 1.0 0.0) (0.55 + 2.6 * age) 40)
+              <+> some (gCircle c centre (v3 0.0 1.0 0.0) (0.35 + 2.6 * age * 0.8) 40)
 
 ||| A struck bar swells and settles.
 pulseFor : Double -> List (Int, Double) -> Int -> Double

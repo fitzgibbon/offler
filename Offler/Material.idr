@@ -115,6 +115,7 @@ Material StandardMaterial where
     , MkField "emissive" Vec4
     , MkField "params" Vec4
     ]
+  matTexCount = 1
   matTextureSlots = ["base_color"]
   matWgsl = wgslSrc
   matGlslVert = vertSrc

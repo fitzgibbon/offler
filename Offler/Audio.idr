@@ -149,6 +149,6 @@ export
 stagePcm : List Double -> IO (AnyPtr, Int)
 stagePcm xs = do
   let n = lengthOf 0 xs
-  a <- newF32 (max 1 n)
+  a <- newF32 (cast (max 1 n))
   ignore (fromPrim (fill a 0 xs))
   pure (raw a, n)

@@ -14,6 +14,7 @@ module Offler.Gfx.Platform
 
 import Data.List1
 import Data.String
+import Data.Vect
 
 %default covering
 
@@ -79,8 +80,11 @@ data GamepadButton
   | DPadUp | DPadDown | DPadLeft | DPadRight
 
 ||| Also the bit each button occupies in the wire mask both backends emit.
+||| `Fin 14` rather than `Nat`: the mask is fourteen bits wide by protocol,
+||| so the bit index and the mask width are tied together here rather than
+||| by the convention that `allButtons` lists every constructor exactly once.
 public export
-buttonBit : GamepadButton -> Nat
+buttonBit : GamepadButton -> Fin 14
 buttonBit South = 0
 buttonBit East = 1
 buttonBit West = 2
@@ -100,7 +104,9 @@ public export
 Eq GamepadButton where
   a == b = buttonBit a == buttonBit b
 
-allButtons : List GamepadButton
+||| Every button, once. `Vect 14` so this cannot drift out of step with the
+||| fourteen bits `buttonBit` names.
+allButtons : Vect 14 GamepadButton
 allButtons = [South, East, West, North, L1, R1, Select, Start,
               LStick, RStick, DPadUp, DPadDown, DPadLeft, DPadRight]
 
@@ -135,8 +141,8 @@ parseGamepads s = mapMaybe padOf (forget (split (== ';') s))
     bit Z = 1
     bit (S k) = 2 * bit k
 
-    isSet : Int -> Nat -> Bool
-    isSet m k = mod (div m (bit k)) 2 == 1
+    isSet : Int -> Fin 14 -> Bool
+    isSet m k = mod (div m (bit (finToNat k))) 2 == 1
 
     padOf : String -> Maybe Gamepad
     padOf rec = case forget (split (== ',') rec) of
@@ -145,7 +151,7 @@ parseGamepads s = mapMaybe padOf (forget (split (== ';') s))
         Just (MkGamepad (cast i) (joinBy "," nameParts)
                 (num lx) (num ly) (num rx) (num ry)
                 (num lt) (num rt)
-                (filter (\b => isSet m (buttonBit b)) allButtons))
+                (filter (\b => isSet m (buttonBit b)) (toList allButtons)))
       _ => Nothing
 
 public export

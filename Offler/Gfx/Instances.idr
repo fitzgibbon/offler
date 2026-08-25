@@ -38,7 +38,7 @@ instCount (MkInstSlice _ n) = n
 export
 record InstBuf where
   constructor MkInstBuf
-  0 bufCap : Int
+  0 bufCap : Nat
   arr : F32Array bufCap
   capInst : Int
 
@@ -46,8 +46,9 @@ export
 newInstBuf : (capInst : Int) -> IO InstBuf
 newInstBuf n = do
   let k = max 1 n
-  a <- newF32 (k * instanceFloats)
-  pure (MkInstBuf (k * instanceFloats) a k)
+      floats = the Nat (cast (k * instanceFloats))
+  a <- newF32 floats
+  pure (MkInstBuf floats a k)
 
 pokeOne : F32Array cap -> Int -> Mat4 -> Color -> IO ()
 pokeOne a i m c = do

@@ -50,6 +50,7 @@ record Hologram where
 public export
 Material Hologram where
   matFields = [MkField "tint" Vec4, MkField "params" Vec4]
+  matTexCount = 0
   matTextureSlots = []
   alphaMode _ = Blend
   matTextures _ = []
