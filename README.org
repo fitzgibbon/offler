@@ -470,10 +470,13 @@ wgpu wants a =CAMetalLayer= on macOS and =SDL_Metal_CreateView= produces one
 without Objective-C. Surface creation is the only per-platform function,
 selected on =SDL_GetCurrentVideoDriver()= at run time (X11 and Wayland in
 one binary). The C shim holds no scene logic and no layout constants — the
-specs arrive from =Offler.Gfx.Layout= at init. The Makefile drops
-=liboffler.so= into each =build/exec/<example>_app/=, where the generated
-launcher's =LD_LIBRARY_PATH= already points, so binaries run with no
-environment set.
+specs arrive from =Offler.Gfx.Layout= at init. The Makefile drops the shim
+into each =build/exec/<example>_app/=, where the generated launcher's
+=LD_LIBRARY_PATH= and =DYLD_LIBRARY_PATH= already point, so binaries run with
+no environment set. Its file name is the host's, not ours: Idris's Chez
+backend emits =(load-shared-object "liboffler.<ext>")= with the extension
+baked in, so the Makefile builds =liboffler.dylib= on macOS and
+=liboffler.so= elsewhere.
 
 Headless verification:
 
@@ -494,7 +497,7 @@ window. The script encodes the two traps: SDL3 prefers Wayland whenever
 | browser | =--cg javascript=   | WebGPU     | yes — visually, in headless Chrome 151 (SwiftShader now presents; the orrery-era white canvas is fixed upstream) |
 | Linux   | =--cg chez=         | wgpu-native (X11) | yes — visually, all six examples, under lavapipe; chime struck via xdotool, mixer live |
 | Linux   | =--cg chez=         | wgpu-native (Wayland) | code path exists, unexercised          |
-| macOS   | =--cg chez=         | wgpu-native (Metal)   | written, never compiled                |
+| macOS   | =--cg chez=         | wgpu-native (Metal)   | builds and runs on aarch64 — all six examples start, draw and survive; not yet compared frame-for-frame against Linux |
 
 * Known limits, in the order they would matter
 

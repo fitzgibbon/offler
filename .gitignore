@@ -2,5 +2,6 @@ build/
 Offler/Shaders.idr
 Offler/Gfx/Config.idr
 *.so
+*.dylib
 result
 Examples/Assets.idr
