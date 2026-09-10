@@ -36,12 +36,17 @@ honours.
   nix develop        # Idris 2, Chez, SDL3, wgpu-native, and the headless test rig
   make               # every example: two browser bundles and a native binary each
   make web           # just the bundles; then open shapes.html — no server needed
+  make site          # the pages and their bundles, laid out for a static host
   make run-shapes    # build and launch a native example
   make check         # the programs that must fail to compile
   make lib           # build the library alone (offler.ipkg)
 #+end_src
 
 * The examples
+
+All six run in a browser at [[https://fitzgibbon.github.io/offler/][fitzgibbon.github.io/offler]], where every push to
+=main= republishes them: GitHub Actions builds the library, runs the
+checks, and publishes =make site= to Pages only if both pass.
 
 Each example is one backend-agnostic =Scene.idr= exporting an =app : App=,
 plus three one-line entry points — =MainGl2=, =MainGpu=, =Main= (native) —

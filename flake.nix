@@ -60,6 +60,15 @@
               echo "  export VK_ICD_FILENAMES=\$(ls /run/opengl-driver/share/vulkan/icd.d/lvp_icd.*.json 2>/dev/null | head -1)"
             '';
           };
+
+          # Everything `make web`, `make lib` and `make check` need, and
+          # nothing else: Idris, and Node to run what the JavaScript backend
+          # emits. The default shell's native half is 3 GiB of Vulkan, SDL
+          # and a headless X server that none of those targets touches, which
+          # is worth avoiding on a machine that starts empty every time.
+          ci = pkgs.mkShell {
+            packages = with pkgs; [ idris2 nodejs ];
+          };
         });
 
       formatter = forAll (pkgs: pkgs.nixpkgs-fmt);

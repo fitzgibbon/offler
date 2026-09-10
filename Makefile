@@ -2,6 +2,7 @@
 #
 #   make          every example: two browser bundles and a native binary each
 #   make web      just the bundles; then open shapes.html etc.
+#   make site     the pages and their bundles, laid out for a static host
 #   make native   just the binaries
 #   make lib      type-check and build the library alone (offler.ipkg)
 #   make check    the programs that must fail to compile
@@ -61,13 +62,27 @@ BUNDLES  := $(foreach e,$(EXAMPLES),$(EXEC)/$(e)-gl2.js $(EXEC)/$(e)-gpu.js)
 NATIVES  := $(foreach e,$(EXAMPLES),$(EXEC)/$(e))
 SHIMS    := $(foreach e,$(EXAMPLES),$(EXEC)/$(e)_app/liboffler.$(DLL))
 
-.PHONY: all web native lib run-% check clean
+SITE := build/site
+
+.PHONY: all web site native lib run-% check clean
 .DEFAULT_GOAL := all
 
 all: web native
 
 web: $(BUNDLES)
 	@echo "open shapes.html, lines.html, swarm.html, flat2d.html, custom.html or chime.html -- no server needed"
+
+# What a static host needs, and nothing else: the pages, and the bundles
+# they name. The tree is the repository's own layout rather than a flattened
+# one, so every href in the pages stays as written -- which is why the same
+# files work opened off disk, served from a directory, and served from a
+# project subpath like /offler/ with nothing rewritten.
+site: $(BUNDLES) $(wildcard *.html)
+	rm -rf $(SITE)
+	@mkdir -p $(SITE)/$(EXEC)
+	cp *.html $(SITE)/
+	cp $(BUNDLES) $(SITE)/$(EXEC)/
+	@echo "site in $(SITE) ($$(du -sh $(SITE) | cut -f1)) -- serve it, or publish it as-is"
 
 native: $(NATIVES) $(SHIMS)
 	@echo "built $(NATIVES) -- run them directly, no environment needed"
