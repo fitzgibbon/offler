@@ -102,14 +102,23 @@ lib: Offler/Shaders.idr Offler/Gfx/Config.idr
 # at exactly the object cap, on the backend where the stack is scarcest --
 # plus a grep of the generated output for the trampoline it depends on,
 # because whether a loop got `__tailRec` is visible nowhere in the source.
-check: stackcheck globalscheck uploadcheck
+#
+# Several tests import an example's scene for its material, so the generated
+# Examples/Assets.idr has to exist before any of them is checked -- and it is
+# not enough to leave that to whoever ran `make web` first. `idris2 --check`
+# exits 0 while printing `Error: Module ... not found`, so on a tree that has
+# never been built the missing module reads as a program that compiled, and
+# the test reports the opposite of what happened. Which is why what counts as
+# "it compiled" below is a clean exit *and* nothing Idris called an error:
+# the exit code alone is not something this can rest on.
+check: Examples/Assets.idr stackcheck globalscheck uploadcheck
 	@fail=0; for t in Tests/*.idr; do \
 	  want=$$(sed -n 's/^-- expect: //p' "$$t" | head -1); \
 	  if [ -z "$$want" ]; then \
 	    echo "FAIL  $$t has no '-- expect:' line"; fail=1; continue; \
 	  fi; \
-	  err=$$($(IDRIS) -p linear -p base --check "$$t" 2>&1); \
-	  if [ $$? -eq 0 ]; then \
+	  err=$$($(IDRIS) -p linear -p base --check "$$t" 2>&1); status=$$?; \
+	  if [ $$status -eq 0 ] && ! echo "$$err" | grep -q "^Error"; then \
 	    echo "FAIL  $$t compiled, but it must not"; fail=1; \
 	  elif ! echo "$$err" | grep -qF "$$want"; then \
 	    echo "FAIL  $$t was rejected, but not for '$$want':"; \
