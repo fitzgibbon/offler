@@ -66,6 +66,13 @@ go a limit f i (v :: rest) w =
          case toPrim (pokeOne a i m c) w of
            MkIORes _ w' => go a limit f (i + 1) rest w'
 
+||| A slice over an array already laid out as instances: an ECS instance
+||| column, which is the staging buffer with nothing to fill. The count is
+||| clamped to what the array holds, so it cannot name floats past the end.
+export
+columnSlice : F32Array cap -> (count : Int) -> InstSlice
+columnSlice a n = MkInstSlice (raw a) (max 0 (min n (capacity a `div` instanceFloats)))
+
 ||| Fill from the start: one model matrix and colour per item, capped at
 ||| the buffer's capacity. Takes the projection function rather than a
 ||| pre-mapped list, so no intermediate fifty-thousand-cons list is built

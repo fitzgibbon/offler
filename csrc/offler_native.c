@@ -58,6 +58,17 @@ void offler_f32_poke16(float *a, int o,
 unsigned *offler_u32_new(int n) { return (unsigned *)calloc((size_t)n, sizeof(unsigned)); }
 void offler_u32_poke(unsigned *a, int i, int v) { a[i] = (unsigned)v; }
 
+/* ECS columns: entity indices, generations and sparse-set slots. */
+int *offler_i32_new(int n) { return (int *)calloc((size_t)(n > 0 ? n : 1), sizeof(int)); }
+int offler_i32_peek(int *a, int i) { return a[i]; }
+void offler_i32_poke(int *a, int i, int v) { a[i] = v; }
+void offler_i32_copy(int *dst, int *src, int n) { memcpy(dst, src, (size_t)n * sizeof(int)); }
+
+/* Move `n` floats within one array: a packed component's swap-remove. */
+void offler_f32_move(float *a, int dst, int src, int n) {
+  memmove(a + dst, a + src, (size_t)n * sizeof(float));
+}
+
 /* ------------------------------------------------------------------- types */
 
 typedef struct {

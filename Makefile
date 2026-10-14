@@ -46,17 +46,18 @@ SHADERS := shaders/standard.vert shaders/standard.frag shaders/standard.wgsl \
            shaders/lines.vert shaders/lines.frag shaders/lines.wgsl
 ASSETS  := assets/uv-checker.png assets/marble.jpg assets/cutout.png
 GENERATED := Offler/Shaders.idr Offler/Gfx/Config.idr Examples/Assets.idr
-SOURCES := $(filter-out $(GENERATED),$(wildcard Offler/*.idr Offler/Gfx/*.idr Offler/Web/*.idr Offler/Native/*.idr) \
+SOURCES := $(filter-out $(GENERATED),$(wildcard Offler/*.idr Offler/Gfx/*.idr Offler/Ecs/*.idr Offler/Web/*.idr Offler/Native/*.idr) \
                                      $(wildcard Examples/*.idr Examples/*/*.idr))
 
 # name (bundle/binary) -> module directory
-EXAMPLES := shapes lines swarm flat2d custom chime
+EXAMPLES := shapes lines swarm flat2d custom chime fountain
 dir_shapes := Shapes
 dir_lines  := Lines
 dir_swarm  := Swarm
 dir_flat2d := Flat2d
 dir_custom := Custom
 dir_chime  := Chime
+dir_fountain := Fountain
 
 BUNDLES  := $(foreach e,$(EXAMPLES),$(EXEC)/$(e)-gl2.js $(EXEC)/$(e)-gpu.js)
 NATIVES  := $(foreach e,$(EXAMPLES),$(EXEC)/$(e))
@@ -70,7 +71,7 @@ SITE := build/site
 all: web native
 
 web: $(BUNDLES)
-	@echo "open shapes.html, lines.html, swarm.html, flat2d.html, custom.html or chime.html -- no server needed"
+	@echo "open shapes.html, lines.html, swarm.html, flat2d.html, custom.html, chime.html or fountain.html -- no server needed"
 
 # What a static host needs, and nothing else: the pages, and the bundles
 # they name. The tree is the repository's own layout rather than a flattened
@@ -111,7 +112,7 @@ lib: Offler/Shaders.idr Offler/Gfx/Config.idr
 # the test reports the opposite of what happened. Which is why what counts as
 # "it compiled" below is a clean exit *and* nothing Idris called an error:
 # the exit code alone is not something this can rest on.
-check: Examples/Assets.idr stackcheck globalscheck uploadcheck
+check: Examples/Assets.idr stackcheck globalscheck uploadcheck ecscheck
 	@fail=0; for t in Tests/*.idr; do \
 	  want=$$(sed -n 's/^-- expect: //p' "$$t" | head -1); \
 	  if [ -z "$$want" ]; then \
@@ -153,6 +154,25 @@ uploadcheck: Offler/Shaders.idr Offler/Gfx/Config.idr
 	  if [ "$$out" != "lines 200000 mesh 300000 lastY 1" ]; then \
 	    echo "FAIL  UploadCheck said '$$out'"; exit 1; \
 	  else echo "ok    Checks/UploadCheck.idr: $$out"; fi
+
+# The ECS's query loops at 100 000 entities on node: packed, boxed and
+# marker stores, joins, removal and despawn mid-query, generational reuse,
+# resources, and change detection and events through a four-frame
+# schedule, against known answers -- plus the trampoline grep for both
+# loops.
+.PHONY: ecscheck
+ecscheck: Offler/Shaders.idr Offler/Gfx/Config.idr
+	@$(IDRIS) -p linear --cg node -o ecscheck Checks/EcsCheck.idr > /dev/null
+	@out=$$(node $(EXEC)/ecscheck); \
+	  want='full True sum 5000050000 live 50000 odd 0 vels 0 named 50000 gen 1 resurrected 0 gravity 9 150003 pick Just TrueNothing | a10/10[] b10/10[1] a0/0[1] b3/0[2] a3/0[2] b0/0[] a0/0[] b0/0[]'; \
+	  if [ "$$out" != "$$want" ]; then \
+	    echo "FAIL  EcsCheck said '$$out'"; exit 1; \
+	  else echo "ok    Checks/EcsCheck.idr: $$out"; fi
+	@for f in foldIds foldLive; do \
+	  if sed -n "/^function Offler_Ecs_Query_$$f/,/^}/p" $(EXEC)/ecscheck | grep -q __tailRec; \
+	  then echo "ok    ECS $$f loop is trampolined (__tailRec)"; \
+	  else echo "FAIL  ECS $$f loop lost its trampoline"; exit 1; fi; \
+	done
 
 .PHONY: stackcheck
 stackcheck: Offler/Shaders.idr Offler/Gfx/Config.idr

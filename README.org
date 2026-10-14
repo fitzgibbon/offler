@@ -44,7 +44,7 @@ honours.
 
 * The examples
 
-All six run in a browser at [[https://fitzgibbon.github.io/offler/][fitzgibbon.github.io/offler]], where every push to
+All seven run in a browser at [[https://fitzgibbon.github.io/offler/][fitzgibbon.github.io/offler]], where every push to
 =main= republishes them: GitHub Actions builds the library, runs the
 checks, and publishes =make site= to Pages only if both pass.
 
@@ -62,15 +62,17 @@ button switches by navigating with =?r=webgpu=.
 | =Swarm=    | =swarm.html=  | *one instanced draw* for the whole crowd: 50 000 bodies (to 200 000 with =+=) stream their model matrix and hue at instance rate against a single material asset — =drawInstanced=, gated by =InstOk= at compile time |
 | =Custom=   | =custom.html= | a user-defined material, end to end: a scanline hologram implementing the =Material= interface with its own WGSL and GLSL, =Blend=-composited through =Mask= cutout panels, all as scene-graph nodes over assets |
 | =Flat2d=   | =flat2d.html= | the 2D mode: forty sprite nodes under an orthographic camera, unlit assets, a frame is forty =setTransform=s |
+| =Fountain= | =fountain.html= | the ECS: two nozzles on a spinning arm -- a three-level =ChildOf= hierarchy propagated to =GlobalTransform= -- spray sparks that are each an entity, spawned from a nozzle's world matrix, integrated, bounced if =Bouncy=, aged and despawned from inside the query over them; thousands of spawns and despawns a second through generational indices, drawn as one instanced call straight from the sparks' =Instance= column. The rate is a resource, input arrives as =Events Event=, a click ray-picks a nozzle's =Pickable= bound and toggles a =Paused= tag, and the status counts =Added Life= -- one =Schedule= runs it all |
 | =Chime=    | =chime.html=  | input, audio and picking meeting: fourteen bars *ray-picked* under the pointer (hover walks the highlight, =PickDown= strikes — no screen-space bar arithmetic), struck by click, touch, keys, gamepad South or under pointer lock; one *procedural* pluck (=SoundPcm=, no asset files) pitched by =semitones= per bar and panned to the bar; wheel rides =setMasterGain=; ripples are immediate gizmos |
 
-All six are verified rendering natively under Xvfb + lavapipe
+All seven are verified rendering natively under Xvfb + lavapipe
 (=scripts/headless-shot.sh=), and in the browser on *both* backends: WebGL2
 at 58 fps on hardware GL (the swarm at 50 000 bodies in one instanced
 call), and — new since the orrery, whose notes record headless WebGPU as
 presenting only a white canvas — browser WebGPU visually confirmed in
 headless Chrome 151 under SwiftShader, screenshots and all, driven over CDP
-with =--enable-unsafe-webgpu --enable-unsafe-swiftshader=.
+with =--enable-unsafe-webgpu --enable-unsafe-swiftshader=; Fountain's
+keyboard and click paths too, by CDP input events.
 
 * Layout of the library
 
@@ -93,6 +95,16 @@ desktop adds.
 | =Offler.Gfx.Uniform=    | the two uniform scratches and the only writers into them            |
 | =Offler.Gfx.Renderer=   | the =Renderer= interface with its linear frame token; =MeshHandle t=, =Drawable= |
 | =Offler.Scene=          | the retained scene graph: bevy_transform + bevy_hierarchy without the ECS |
+| =Offler.Ecs=            | the entity-component-system, re-exporting the modules below         |
+| =Offler.Ecs.World=      | =World cs=: the component list in the type, =Component= and its storage =Kind=, =Resource=, spawn/despawn/insert/=getComponent=, change ticks |
+| =Offler.Ecs.Store=      | sparse sets with per-slot added/changed ticks; =Packed= (=Columnar=, foreign float columns), =Boxed=, =Marker=, =Global= stores |
+| =Offler.Ecs.Query=      | =cmap=, =cmapM=, =cfor=, =cfold=, =spawn= over tuple queries: components, =Entity=, =Maybe=, =With=, =Without=, =Changed=, =Added= |
+| =Offler.Ecs.Transform=  | =Transform=, =GlobalTransform=, =ChildOf= as components; =propagate= |
+| =Offler.Ecs.Render=     | =Renderable=, =renderWorld=, and =Instance b= batches uploaded from their column as it stands |
+| =Offler.Ecs.Schedule=   | =Tick=, =Clock=, =Schedule=: ordered systems, each with its last-run tick |
+| =Offler.Ecs.Event=      | =Events e=: double-buffered, read per system since its last run     |
+| =Offler.Ecs.Picking=    | =Pickable= bounds and =pickTargets=, placed by =GlobalTransform=    |
+| =Offler.Ecs.Column=     | the ECS's foreign primitives: =Int= columns, bulk copy and move     |
 | =Offler.Gizmos=         | both gizmo modes over pure =GizmoData=: the immediate overlay and retained gizmo assets |
 | =Offler.Picking=        | which thing is under the pointer: =pickRay= unprojection, bounds + ray tests, and the hover/press/click state machine — pure over =Camera=, the scene graph and the =Event= stream |
 | =Offler.Gfx.Platform=   | the =Platform= interface and the input =Event= vocabulary: keys, pointer (absolute + relative + lock), touch, wheel, polled =Gamepad= state |
@@ -243,6 +255,10 @@ by mechanism:
 | =bevy_input= (keyboard, mouse, touch, gamepad) | the =Platform= half of input: one =Event= stream for keys/pointer/touch (SDL names translated to the browser's spelling, fingers never faked as clicks) and =gamepads= polled into one =Gamepad= record — bevy's =Axis=/=ButtonInput= resources are its ECS spelling of the same snapshot |
 | =bevy_picking= (pointers → backends → focus) | =Offler.Picking=, the same three layers: mice and fingers unify into =PointerId=; the backend is =pickRay= (the *analytic* inverse of the camera the renderer draws with, so pixels map to world rays exactly at every aspect — no screen-space approximations) cast against declared bounds, =sceneTargets= reading world matrices from the graph where bevy's raycast reads =Mesh= assets; the focus layer is =pickStep=, a *pure* state machine emitting =PickOver=/=PickOut=/=PickDown=/=PickUp=/=PickClick= where bevy dispatches observer events. GPU id-buffer picking, bevy's optional backend, would need render-to-texture and stays out |
 | =bevy_audio= (=AudioPlayer=, =PlaybackSettings=) | the =Audio= interface: =loadSound= retains (URL decode async, handle valid at once — the texture bargain), =play= with =Playback= (gain/pan/rate/=semitones=/loop) mints a generational =Voice= where bevy spawns an entity; =SoundPcm= is the procedural path bevy routes through =AudioSource= assets |
+| =bevy_ecs= (=World=, =Query=, =Commands=) | =Offler.Ecs=: a =World cs= indexed by its component list, so a query naming an unregistered component is a missing instance rather than a panic; each component picks its storage through its =Component= instance (APECS's =Storage=), not an archetype table; =cmap=/=cfold= over tuple queries where bevy has =Query<(&A, &mut B), With<C>>=; structural changes are immediate and safe mid-query (iteration walks a snapshot) where bevy defers them through =Commands=; =Changed=/=Added= against each system's last-run tick, as in bevy |
+| =Res<T>= / =Events<E>= + =EventReader= | =Resource c= (a component stored =Global=, so =resource= accepts only types declared as resources) and =Events e=, double-buffered, each system reading what was sent since it last ran |
+| =bevy_picking= over entities | =Offler.Ecs.Picking=: =Pickable= bounds placed by =GlobalTransform=, keyed by =Entity=, into =Offler.Picking='s focus layer |
+| =Transform= / =GlobalTransform= / =ChildOf= components | =Offler.Ecs.Transform=, with =propagate= as the system; =Offler.Scene= remains for scenes that want a tree without a world |
 | =bevy_app= (=App=, =runner=) | =Offler.App=: an =App= is a title plus one rank-2 scene function; the backend launchers are bevy's runners, each owning its target's startup (the winit loop, or here: SDL3+wgpu, WebGL2, or WebGPU's async adapter). Bevy's plugin/schedule machinery has no counterpart — offler scenes are plain =IO= driven by =runLoop= |
 
 Where bevy derives the GPU-facing description with a proc macro, offler
@@ -321,10 +337,189 @@ ill-topologied node cannot even be built.
 
 There is no dirty tracking: propagation is a full multiply-down per frame,
 which at scene-graph granularity (dozens to hundreds of nodes) is nothing.
-Crowds do not belong in a graph -- the Swarm example keeps its fifty
+A scene that wants its hierarchy *as data* -- queried, spawned and despawned
+alongside everything else -- wants =Offler.Ecs.Transform= instead, the same
+idea hosted in the ECS as bevy hosts it. Crowds do not belong in a graph -- the Swarm example keeps its fifty
 thousand bodies in a flat list and draws them with =drawInstanced=,
 which is how bevy renders crowds too (one material asset, one instanced
 call).
+
+* The entity-component-system
+
+=Offler.Ecs= is APECS's core in bevy's vocabulary. The core comes from APECS
+because its design suits Idris: a component type chooses its own storage
+through an interface, the world is a fixed set of stores, and systems are
+=cmap=/=cfold= over tuples of components. Bevy's archetype tables and
+parallel scheduler solve problems a single-threaded frame loop does not
+have, and their run-time type ids would fight the type checker. From bevy
+come the names and the pieces a game reaches for: generational =Entity=,
+=Transform=/=GlobalTransform=/=ChildOf= with a propagation system, and
+render extraction into instanced batches.
+
+#+begin_src idris
+  record Pos where
+    constructor MkPos
+    pos : V3
+
+  data Bouncy = MkBouncy
+
+  Columnar Pos where                 -- three floats in a foreign column
+    width = 3
+    storeCol a o (MkPos p) = do
+      poke a (field 0 o) p.vx; poke a (field 1 o) p.vy; poke a (field 2 o) p.vz
+    loadCol a o = do
+      x <- peek a (field 0 o); y <- peek a (field 1 o); z <- peek a (field 2 o)
+      pure (MkPos (MkV3 x y z))
+
+  -- Vel likewise
+
+  Component Pos where kind = Packed
+  Component Vel where kind = Packed
+  Component Bouncy where kind = Marker MkBouncy
+
+  W : List Type
+  W = [Pos, Vel, Bouncy, Instance Spark]
+
+  move : System W
+  move t w = cmap {q = (Pos, Vel)} w $ \(MkPos p, MkVel v) =>
+    let v' = { vy $= \y => y - 9.0 * t.delta } v
+     in (MkPos (add3 p (scale3 t.delta v')), MkVel v')
+#+end_src
+
+** What the types hold
+
+- *The world's component set.* =World cs= is indexed by its component
+  list, and every query, write and accessor finds its store by an =Elem=
+  proof. A system that names a component the world was not built with has
+  no =Query= (or =Write=) instance and does not compile
+  (=Tests/EcsMissingComponent.idr=, =Tests/EcsWriteMissing.idr=).
+- *Column layouts.* A =Columnar= component writes its fields at positions
+  =field= proves inside its declared width; a third float in a two-float
+  slot is =LTE 3 2= unsolved (=Tests/EcsColumnOverrun.idr=). The
+  =Instance= column's width and colour offset are proved equal to
+  =Offler.Gfx.Layout='s instance layout, so the column the store keeps is
+  byte for byte the staging buffer the GPU reads.
+- *Batches.* =Instance b= is phantom-typed by its batch, so two crowds'
+  columns cannot be confused, and =drawInstanced= still demands =InstOk=
+  of the material.
+- *Entities cannot be forged*: =Entity='s constructor is private, so an
+  index is always below the capacity of the world that minted it.
+- *Resources are declared.* =resource= and =setResource= demand
+  =Resource c=, whose one instance makes the component =Global=; asking an
+  ordinary component for "its" value does not compile
+  (=Tests/EcsNotResource.idr=).
+
+** Storage
+
+One sparse set per component type: an =Int= column from entity index to
+dense position and one back. Insertion appends; removal moves the last
+element into the hole, so the dense run stays contiguous. Values live in
+one of three representations, chosen by the component:
+
+| =Kind=     | values                                  | for                              |
+|------------+-----------------------------------------+----------------------------------|
+| =Packed=   | a foreign =F32Array= at a fixed stride  | numeric components: no Idris value, so no boxed flonum, at rest |
+| =Boxed=    | a mutable array of Idris values         | drawables, entity references, strings |
+| =Marker=   | none -- membership only                 | tags                             |
+| =Global=   | one Idris value for the world           | resources: =Resource c= gives a component this kind |
+
+Because the run is contiguous, an =Instance Spark= store's float column
+/is/ a filled instance buffer: =uploadBatch= hands it to =writeInstances=
+as it stands. There is no extraction pass and no per-frame fill.
+
+Each dense slot also carries two ticks -- when the component was added and
+when it was last written -- which move with the value on a swap-remove.
+
+Capacity is fixed at =newWorld=: nothing grows, so nothing a query holds is
+ever reallocated beneath it.
+
+** Change detection, resources and events
+
+A =Schedule= runs its systems in order and remembers the tick each last ran
+at. =Changed c= and =Added c= match entities whose =c= was written or added
+since /that/ system last ran -- bevy's semantics, so a system earlier in
+the frame than the writer sees the write next frame, and every system sees
+every change exactly once. Every write counts, an equal value included. The
+tick advances on entering and on leaving each system, so writes made outside
+any system (input, setup) are newer than every system's last run.
+=propagate= uses it: a root's =GlobalTransform= is recomputed only when its
+=Transform= changed (=setParent= and =detach= mark the transform changed, so
+re-parenting is seen).
+
+A resource is a type with a =Resource= instance -- an initial value -- and
+is otherwise an ordinary component stored =Global=: =resource=,
+=setResource= and =modifyResource= read and write it, and a query naming it
+reads the one value for every entity it visits, so =(Pos, Gravity)= works
+as in APECS. =Events e= is a resource holding this frame's and the previous
+frame's events, each stamped with the tick it was sent at; =readEvents=
+returns those sent since the running system last ran, so each system sees
+each event once wherever it sits in the order, and an event lives two
+frames at most.
+
+** Iteration, and why there are no commands
+
+A query compiles once per system run to a /plan/ -- the stores it requires,
+a membership test and a reader -- and walks a snapshot of the smallest
+required store's entities, re-checking membership as it goes. So
+everything is safe inside a system: inserting, removing, spawning and
+despawning, including despawning the entity being visited. Spawned
+entities are not visited and removed ones are skipped. Bevy routes these
+through a deferred =Commands= buffer; here the snapshot makes that buffer
+unnecessary, and there is no flush point to forget. =cmapM= drops the write
+for an entity its own system despawned, checked by generation.
+
+The loops are =PrimIO= with the world bound on the left, and
+=Checks/EcsCheck.idr= runs them at 100 000 entities on node -- joins,
+optional and excluded components, mid-query removal and despawn,
+generational reuse -- against known answers, with the =__tailRec= grep for
+both loops.
+
+** Nothing in the world refers to the world
+
+The world holds stores and data. Systems, schedules and clocks live outside
+it, relations between entities are =Entity= ids (=ChildOf= holds one), and
+there is no command queue of closures. A world holding a closure over
+itself would be a reference cycle, which a backend without a tracing
+collector -- the Rust backend in =~/src/idris2-rs= is one -- cannot reclaim.
+The design is meant to run there unchanged once that backend's adapters
+pass =Double= and opaque handles; =Offler.Ecs.Column= and the accessors in
+=Offler.Gfx.Array= are the only places a new specifier would go.
+
+** Performance, and what the code generators taught
+
+Measured on a 30 000-entity fountain world, per system run (node 24 and
+Chez, this machine, change ticks included), against the Swarm example's style of a list of
+records walked by a trampolined fill:
+
+| work                                   | ECS, node | ECS, Chez | list, node | list, Chez |
+|----------------------------------------+-----------+-----------+------------+------------|
+| =move=: read two =V3=s, write two      | 19 ms     | 28 ms     | 7 ms       | 3 ms       |
+| =paint=: three reads, a matrix and =hsl=, write an instance | 33 ms | 66 ms | 15 ms (fill) | 45 ms (fill) |
+| read-only fold over one =V3=           | 5 ms      | 6 ms      |            |            |
+
+The ECS costs two to three times a hand-written loop over a list it does
+not have to join, search or keep consistent -- the price of generic
+composition through closures. The first version cost seven times on node
+and a hundred on Chez; what closed the gap is worth knowing for any hot
+Idris code here:
+
+- *Arity raising.* A pure function whose clauses are lambdas, or a pure
+  binding used once, is inlined into the closure that uses it -- so a
+  store lookup, a constructor match or a dictionary partial application
+  meant to happen once per system ran once per entity. Single-field
+  records do not stop it, because they are erased as newtypes. What does:
+  binding through =IO=, through =Offler.Ecs.Column.once=, a =%noinline=
+  identity whose strict argument is evaluated at the call.
+- *Literals in comparisons.* =x /= 0= on =Int= goes through =Eq Int= with
+  the literal converted from a BigInt on every call on the JavaScript
+  backend; =eqI=, written against the primitive, inlines to a bare ~===~.
+  =Nat= offsets are BigInts too, which is why =field= takes its step as an
+  =Int= and proves the bound on the literal's =Nat= image.
+- *Chez's FFI.* A call into the C shim costs hundreds of nanoseconds, and a
+  per-entity loop makes dozens. The =F32Array= and =Int= column accessors
+  now carry inline Scheme specifiers over =foreign-ref= / =foreign-set!=
+  on the same =malloc='d memory -- which also more than halved the Swarm
+  fill on Chez.
 
 * Retained materials
 
@@ -504,17 +699,22 @@ Headless verification:
 #+end_src
 
 runs an example under Xvfb with lavapipe as the Vulkan device and grabs the
-window. The script encodes the two traps: SDL3 prefers Wayland whenever
-=WAYLAND_DISPLAY= is set regardless of =DISPLAY=, and wgpu dlopens
-=libvulkan.so.1=, which the dev shell puts on the library path.
+window. The script encodes the traps: SDL3 prefers Wayland whenever
+=WAYLAND_DISPLAY= is set regardless of =DISPLAY=; wgpu dlopens
+=libvulkan.so.1=, which the dev shell puts on the library path; and the rig
+must not borrow the host's libraries -- a host =LD_LIBRARY_PATH= can carry
+libraries built against a newer glibc than the shell's, and the host's
+lavapipe can be one the shell's processes cannot load, which surfaces as a
+validation error from =wgpuInstanceCreateSurface=. The script keeps only
+the shell's Vulkan loader and takes lavapipe from the shell's own mesa.
 
 * Status
 
 | target  | backend             | API        | verified                                   |
 |---------+---------------------+------------+--------------------------------------------|
-| browser | =--cg javascript=   | WebGL2     | yes — visually, all six examples, 58 fps; chime's input paths driven over CDP |
+| browser | =--cg javascript=   | WebGL2     | yes — visually, all seven examples, 58 fps; chime's and fountain's input paths driven over CDP |
 | browser | =--cg javascript=   | WebGPU     | yes — visually, in headless Chrome 151 (SwiftShader now presents; the orrery-era white canvas is fixed upstream) |
-| Linux   | =--cg chez=         | wgpu-native (X11) | yes — visually, all six examples, under lavapipe; chime struck via xdotool, mixer live |
+| Linux   | =--cg chez=         | wgpu-native (X11) | yes — visually, all seven examples, under lavapipe; chime struck via xdotool, mixer live |
 | Linux   | =--cg chez=         | wgpu-native (Wayland) | code path exists, unexercised          |
 | macOS   | =--cg chez=         | wgpu-native (Metal)   | builds and runs on aarch64 — all six examples start, draw and survive; not yet compared frame-for-frame against Linux |
 
@@ -572,7 +772,7 @@ window. The script encodes the two traps: SDL3 prefers Wayland whenever
 
 * Testing
 
-- =make check= — ten programs that must fail to compile, each asserting
+- =make check= — eighteen programs that must fail to compile, each asserting
   /why/ it was rejected (a linearity error, a private constructor, a =So=
   bound, a stride mismatch, an oversized material block, a =MaterialId=
   paired with the wrong material type, a line mesh drawn with a material
@@ -590,6 +790,14 @@ window. The script encodes the two traps: SDL3 prefers Wayland whenever
   caught only by running the loop at scale and reading the output. (The
   fix: the loop is written in =PrimIO= with the world bound on the
   left-hand side, so the recursive call is saturated and trampolines.)
+- =Checks/EcsCheck.idr=, run by =make check= — the ECS at 100 000 entities
+  on node: packed, boxed, marker and global stores, joins,
+  =Maybe=/=With=/=Without=, removal and despawn mid-query, a despawning
+  =cmapM= that must not resurrect its write, generational reuse, a pick
+  through a propagated hierarchy, and four frames of a schedule in which
+  systems before and after a writer must see its changes and events
+  exactly once, on the right frame; plus the =__tailRec= grep for both
+  query loops.
 - =scripts/headless-shot.sh= — pixels from the native build without a GPU or
   a display.
 - The browser pages surface uncaught errors and unhandled rejections into a

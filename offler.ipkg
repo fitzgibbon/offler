@@ -19,6 +19,17 @@ modules = Offler.App
         , Offler.Gfx.Renderer
         , Offler.Gfx.Scratch
         , Offler.Gfx.Uniform
+        , Offler.Ecs
+        , Offler.Ecs.Column
+        , Offler.Ecs.Entity
+        , Offler.Ecs.Event
+        , Offler.Ecs.Picking
+        , Offler.Ecs.Query
+        , Offler.Ecs.Render
+        , Offler.Ecs.Schedule
+        , Offler.Ecs.Store
+        , Offler.Ecs.Transform
+        , Offler.Ecs.World
         , Offler.Gizmos
         , Offler.Light
         , Offler.Material
