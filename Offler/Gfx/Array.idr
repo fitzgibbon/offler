@@ -2,7 +2,10 @@
 ||| that keep writes to it inside it.
 |||
 ||| One declaration per primitive carrying a specifier per backend -- the
-||| pattern `Data.Buffer` uses. The handle crosses the FFI as `AnyPtr`: a
+||| pattern `Data.Buffer` uses. On Chez the element accessors are inline
+||| Scheme over `foreign-ref`/`foreign-set!` rather than calls into the C
+||| shim: the memory is the same `malloc`'d floats, but a C call costs
+||| hundreds of nanoseconds and a per-entity loop makes dozens of them. The handle crosses the FFI as `AnyPtr`: a
 ||| `Float32Array` in the browser, a `malloc`'d `float *` natively. It cannot be
 ||| an `[external]` type, because those can be returned from a C function but
 ||| not passed to one.
@@ -112,6 +115,15 @@ export %inline
 sub : (k : Nat) -> At cap w -> {auto 0 ok : LTE (k + w') w} -> At cap w'
 sub k (MkAt i) = MkAt (i + cast k)
 
+||| `sub` with the step written as an `Int`, for per-entity paths. The
+||| bound is the same proof, on the literal's `Nat` image, and reduces at
+||| compile time; at run time the step is a plain `Int` addition. `sub`'s
+||| `Nat` step is a BigInt on the JavaScript backend, converted on every
+||| call -- nothing at load time, a measurable share of a per-entity loop.
+export %inline
+field : (k : Int) -> At cap w -> {auto 0 ok : LTE (cast k + w') w} -> At cap w'
+field k (MkAt i) = MkAt (i + k)
+
 ||| The offset a position names. There is no route back from an `Int` to an
 ||| `At` that skips the bound -- except the one named `unsafeAt`, below.
 export %inline
@@ -138,22 +150,26 @@ unsafeAt = MkAt
          "javascript:lambda:(n)=>new Float32Array(n)"
 prim__new : Int -> PrimIO AnyPtr
 
-%foreign "C:offler_f32_poke,liboffler"
+%foreign "scheme,chez:(lambda (a i v) (foreign-set! 'float a (fx* i 4) v))"
+         "C:offler_f32_poke,liboffler"
          "javascript:lambda:(a,i,v)=>{a[i]=v}"
 prim__poke : AnyPtr -> Int -> Double -> PrimIO ()
 
-%foreign "C:offler_f32_poke4,liboffler"
+%foreign "scheme,chez:(lambda (a o x y z w) (foreign-set! 'float a (fx* o 4) x) (foreign-set! 'float a (fx* (fx+ o 1) 4) y) (foreign-set! 'float a (fx* (fx+ o 2) 4) z) (foreign-set! 'float a (fx* (fx+ o 3) 4) w))"
+         "C:offler_f32_poke4,liboffler"
          "javascript:lambda:(a,o,x,y,z,w)=>{a[o]=x;a[o+1]=y;a[o+2]=z;a[o+3]=w}"
 prim__poke4 : AnyPtr -> Int -> Double -> Double -> Double -> Double -> PrimIO ()
 
 ||| Sixteen components in one call. Sixteen separate pokes per matrix was half
 ||| the orrery's per-frame cost at scale; it is also what makes line overlays
 ||| affordable to build, at four padded vertices a call.
-%foreign "C:offler_f32_poke16,liboffler"
+%foreign "scheme,chez:(lambda (a o x0 x1 x2 x3 x4 x5 x6 x7 x8 x9 x10 x11 x12 x13 x14 x15) (foreign-set! 'float a (fx* (fx+ o 0) 4) x0) (foreign-set! 'float a (fx* (fx+ o 1) 4) x1) (foreign-set! 'float a (fx* (fx+ o 2) 4) x2) (foreign-set! 'float a (fx* (fx+ o 3) 4) x3) (foreign-set! 'float a (fx* (fx+ o 4) 4) x4) (foreign-set! 'float a (fx* (fx+ o 5) 4) x5) (foreign-set! 'float a (fx* (fx+ o 6) 4) x6) (foreign-set! 'float a (fx* (fx+ o 7) 4) x7) (foreign-set! 'float a (fx* (fx+ o 8) 4) x8) (foreign-set! 'float a (fx* (fx+ o 9) 4) x9) (foreign-set! 'float a (fx* (fx+ o 10) 4) x10) (foreign-set! 'float a (fx* (fx+ o 11) 4) x11) (foreign-set! 'float a (fx* (fx+ o 12) 4) x12) (foreign-set! 'float a (fx* (fx+ o 13) 4) x13) (foreign-set! 'float a (fx* (fx+ o 14) 4) x14) (foreign-set! 'float a (fx* (fx+ o 15) 4) x15))"
+         "C:offler_f32_poke16,liboffler"
          "javascript:lambda:(a,o,x0, x1, x2, x3, x4, x5, x6, x7, x8, x9, x10, x11, x12, x13, x14, x15)=>{a[o+0]=x0;a[o+1]=x1;a[o+2]=x2;a[o+3]=x3;a[o+4]=x4;a[o+5]=x5;a[o+6]=x6;a[o+7]=x7;a[o+8]=x8;a[o+9]=x9;a[o+10]=x10;a[o+11]=x11;a[o+12]=x12;a[o+13]=x13;a[o+14]=x14;a[o+15]=x15}"
 prim__poke16 : AnyPtr -> Int -> Double -> Double -> Double -> Double -> Double -> Double -> Double -> Double -> Double -> Double -> Double -> Double -> Double -> Double -> Double -> Double -> PrimIO ()
 
-%foreign "C:offler_f32_peek,liboffler"
+%foreign "scheme,chez:(lambda (a i) (foreign-ref 'float a (fx* i 4)))"
+         "C:offler_f32_peek,liboffler"
          "javascript:lambda:(a,i)=>a[i]"
 prim__peek : AnyPtr -> Int -> PrimIO Double
 
