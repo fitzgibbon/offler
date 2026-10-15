@@ -24,6 +24,7 @@ import Examples.Custom.Scene
 import Examples.Racer.Sound
 import Examples.Racer.Track
 import Examples.Util
+import Language.Reflection
 import Offler.Camera
 import Offler.Color
 import Offler.Ecs
@@ -36,14 +37,12 @@ import Offler.Math
 import Offler.Mesh
 import Offler.Transform
 
+%language ElabReflection
+
 %hide Control.Linear.LIO.fromInteger
 
 %default covering
 
--- The world has thirty component types, and proof search walks the
--- list once per membership proof and once per store: past the default
--- depth.
-%auto_implicit_depth 128
 
 --------------------------------------------------------------------------------
 -- Components
@@ -208,13 +207,13 @@ Resource Standings where initial = MkStandings 1 8
 public export
 data Sfx = Fire V3 | Boom V3 | Lap | Scrape V3
 
-public export
-W : List Type
-W = [ Transform, GlobalTransform, ChildOf, Renderable, Pickable
-    , Kin, Pad, Racer, Cpu, Human, Weapon, Spin, Missile
-    , Pos, Vel, Life, Hue
-    , Instance Spark, Instance Rocket, Instance Tyre, Instance Pine, Instance Shade
-    , Countdown, Keys, Touches, Follow, View, Standings, Events Event, Events Sfx ]
+%runElab world "W"
+  [ `(Transform), `(GlobalTransform), `(ChildOf), `(Renderable), `(Pickable),
+    `(Kin), `(Pad), `(Racer), `(Cpu), `(Human), `(Weapon), `(Spin),
+    `(Missile), `(Pos), `(Vel), `(Life), `(Hue), `(Instance Spark),
+    `(Instance Rocket), `(Instance Tyre), `(Instance Pine), `(Instance Shade),
+    `(Countdown), `(Keys), `(Touches), `(Follow), `(View), `(Standings),
+    `(Events Event), `(Events Sfx) ]
 
 maxEntities : Int
 maxEntities = 4096

@@ -24,11 +24,11 @@ record Tick where
   delta : Double
 
 public export
-System : List Type -> Type
+System : TypeTree -> Type
 System cs = Tick -> World cs -> IO ()
 
 export
-record Schedule (cs : List Type) where
+record Schedule (cs : TypeTree) where
   constructor MkSchedule
   systems : List (System cs, IORef Int)
 

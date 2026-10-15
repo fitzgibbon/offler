@@ -7,8 +7,11 @@ module Checks.EcsCheck
 import Data.IORef
 import Data.Maybe
 import Data.String
+import Language.Reflection
 import Offler.Camera
 import Offler.Ecs
+
+%language ElabReflection
 
 %default covering
 
@@ -20,8 +23,8 @@ record Vel where
   constructor MkVel
   vx : Double
 
-record Name where
-  constructor MkName
+record Label where
+  constructor MkLabel
   name : String
 
 data Odd = MkOdd
@@ -45,11 +48,10 @@ Columnar Vel where
 
 Component Pos where kind = Packed
 Component Vel where kind = Packed
-Component Name where kind = Boxed
+Component Label where kind = Boxed
 Component Odd where kind = Marker MkOdd
 
-W : List Type
-W = [Pos, Vel, Name, Odd, Gravity]
+%runElab world "W" [`(Pos), `(Vel), `(Label), `(Odd), `(Gravity)]
 
 cap : Int
 cap = 100000
@@ -71,11 +73,10 @@ step (MkPos p, MkVel v) = MkPos (p + v)
 total' : World W -> IO Double
 total' w = cfold {q = Pos} w (\s, p => s + p.px) 0.0
 
-||| A small world run through a schedule for four frames: what each
-||| system sees of changes and events depends on where it sits relative to
-||| the writer.
-V : List Type
-V = [Pos, Events Int]
+-- A small world run through a schedule for four frames: what each
+-- system sees of changes and events depends on where it sits relative to
+-- the writer.
+%runElab world "V" [`(Pos), `(Events Int)]
 
 record Log where
   constructor MkLog
@@ -99,11 +100,10 @@ writer l _ w = do
     when (entityIndex e < 3) $ insert w e (MkPos (p + 1.0))
   when (f <= 2) $ sendEvent w f
 
-||| A pickable child under a moved parent, picked through the camera at the
-||| centre of the screen and missed at the edge: `pickTargets` places
-||| bounds by the propagated `GlobalTransform`.
-P : List Type
-P = [Transform, GlobalTransform, ChildOf, Pickable]
+-- A pickable child under a moved parent, picked through the camera at the
+-- centre of the screen and missed at the edge: `pickTargets` places
+-- bounds by the propagated `GlobalTransform`.
+%runElab world "P" [`(Transform), `(GlobalTransform), `(ChildOf), `(Pickable)]
 
 picked : IO String
 picked = do
@@ -147,11 +147,11 @@ main = do
   cfor {q = (Entity, With Odd)} w (\(e, _) => despawn w e)
   n1 <- entityCount w
   odd <- countOf Odd w
-  -- Name the even half, then strip velocity from those named.
-  cmap {q = (Pos, Without Odd)} {r = Name} w (\(MkPos p, _) => MkName (show p))
-  cmap {q = (With Name, Vel)} {r = Without Vel} w (\_ => MkWithout)
+  -- Label the even half, then strip velocity from those named.
+  cmap {q = (Pos, Without Odd)} {r = Label} w (\(MkPos p, _) => MkLabel (show p))
+  cmap {q = (With Label, Vel)} {r = Without Vel} w (\_ => MkWithout)
   vels <- countOf Vel w
-  named <- cfold {q = (Name, Maybe Vel)} w
+  named <- cfold {q = (Label, Maybe Vel)} w
              (\k, (_, mv) => case mv of Nothing => k + 1; Just _ => k) (the Int 0)
   -- Reuse: a recycled index comes back at a new generation.
   Just e <- spawn w (MkPos 0.0) | Nothing => putStrLn "spawn failed"

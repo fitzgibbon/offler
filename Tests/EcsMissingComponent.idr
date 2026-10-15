@@ -4,7 +4,10 @@
 -- where bevy panics at run time on an unregistered component.
 module Tests.EcsMissingComponent
 
+import Language.Reflection
 import Offler.Ecs
+
+%language ElabReflection
 
 record Pos where
   constructor MkPos
@@ -17,5 +20,8 @@ record Vel where
 Component Pos where kind = Boxed
 Component Vel where kind = Boxed
 
-step : World [Pos] -> IO ()
+%runElab world "PosOnly" [`(Pos)]
+
+
+step : World PosOnly -> IO ()
 step w = cmap {q = (Pos, Vel)} w (\(MkPos p, MkVel v) => MkPos (p + v))

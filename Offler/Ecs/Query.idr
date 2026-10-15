@@ -7,7 +7,7 @@
 ||| `(Pos, Vel)`, `(Entity, Life, Without Frozen)`, `(Pos, Changed Pos)`. A
 ||| resource in a query reads the one world-wide value for every entity. A write type is a component, `Maybe c`
 ||| (`Nothing` removes), `Without c` (removes), `()`, or a pair. Both are
-||| resolved by interface search against the world's component list, so a
+||| resolved by interface search against the world's component types, so a
 ||| query naming a component the world lacks does not compile.
 |||
 ||| Iteration walks a *snapshot* of the smallest required store's entities,
@@ -71,7 +71,7 @@ record Plan q where
   fetch : Int -> PrimIO q
 
 public export
-interface Query (0 cs : List Type) (0 q : Type) where
+interface Query (0 cs : TypeTree) (0 q : Type) where
   plan : World cs -> IO (Plan q)
 
 ||| A write plan: what `write` returns, once per system run. Two
@@ -88,7 +88,7 @@ putW (MkWriter f) = f
 putW NoWrite = \_, _, wd => MkIORes () wd
 
 public export
-interface Write (0 cs : List Type) (0 r : Type) where
+interface Write (0 cs : TypeTree) (0 r : Type) where
   write : World cs -> IO (Writer r)
 
 always : Int -> PrimIO Bool

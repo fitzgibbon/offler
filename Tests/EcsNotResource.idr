@@ -5,7 +5,10 @@
 -- "its" value does not compile.
 module Tests.EcsNotResource
 
+import Language.Reflection
 import Offler.Ecs
+
+%language ElabReflection
 
 record Pos where
   constructor MkPos
@@ -13,5 +16,8 @@ record Pos where
 
 Component Pos where kind = Boxed
 
-oops : World [Pos] -> IO Pos
+%runElab world "PosOnly" [`(Pos)]
+
+
+oops : World PosOnly -> IO Pos
 oops w = resource w

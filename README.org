@@ -97,7 +97,7 @@ desktop adds.
 | =Offler.Gfx.Renderer=   | the =Renderer= interface with its linear frame token; =MeshHandle t=, =Drawable= |
 | =Offler.Scene=          | the retained scene graph: bevy_transform + bevy_hierarchy without the ECS |
 | =Offler.Ecs=            | the entity-component-system, re-exporting the modules below         |
-| =Offler.Ecs.World=      | =World cs=: the component list in the type, =Component= and its storage =Kind=, =Resource=, spawn/despawn/insert/=getComponent=, change ticks |
+| =Offler.Ecs.World=      | =World cs=: the component types in the type, declared by =world=, =Component= and its storage =Kind=, =Resource=, spawn/despawn/insert/=getComponent=, change ticks |
 | =Offler.Ecs.Store=      | sparse sets with per-slot added/changed ticks; =Packed= (=Columnar=, foreign float columns), =Boxed=, =Marker=, =Global= stores |
 | =Offler.Ecs.Query=      | =cmap=, =cmapM=, =cfor=, =cfold=, =spawn= over tuple queries: components, =Entity=, =Maybe=, =With=, =Without=, =Changed=, =Added= |
 | =Offler.Ecs.Transform=  | =Transform=, =GlobalTransform=, =ChildOf= as components; =propagate= |
@@ -256,7 +256,7 @@ by mechanism:
 | =bevy_input= (keyboard, mouse, touch, gamepad) | the =Platform= half of input: one =Event= stream for keys/pointer/touch (SDL names translated to the browser's spelling, fingers never faked as clicks) and =gamepads= polled into one =Gamepad= record — bevy's =Axis=/=ButtonInput= resources are its ECS spelling of the same snapshot |
 | =bevy_picking= (pointers → backends → focus) | =Offler.Picking=, the same three layers: mice and fingers unify into =PointerId=; the backend is =pickRay= (the *analytic* inverse of the camera the renderer draws with, so pixels map to world rays exactly at every aspect — no screen-space approximations) cast against declared bounds, =sceneTargets= reading world matrices from the graph where bevy's raycast reads =Mesh= assets; the focus layer is =pickStep=, a *pure* state machine emitting =PickOver=/=PickOut=/=PickDown=/=PickUp=/=PickClick= where bevy dispatches observer events. GPU id-buffer picking, bevy's optional backend, would need render-to-texture and stays out |
 | =bevy_audio= (=AudioPlayer=, =PlaybackSettings=) | the =Audio= interface: =loadSound= retains (URL decode async, handle valid at once — the texture bargain), =play= with =Playback= (gain/pan/rate/=semitones=/loop) mints a generational =Voice= where bevy spawns an entity; =SoundPcm= is the procedural path bevy routes through =AudioSource= assets |
-| =bevy_ecs= (=World=, =Query=, =Commands=) | =Offler.Ecs=: a =World cs= indexed by its component list, so a query naming an unregistered component is a missing instance rather than a panic; each component picks its storage through its =Component= instance (APECS's =Storage=), not an archetype table; =cmap=/=cfold= over tuple queries where bevy has =Query<(&A, &mut B), With<C>>=; structural changes are immediate and safe mid-query (iteration walks a snapshot) where bevy defers them through =Commands=; =Changed=/=Added= against each system's last-run tick, as in bevy |
+| =bevy_ecs= (=World=, =Query=, =Commands=) | =Offler.Ecs=: a =World cs= indexed by its component types, so a query naming an unregistered component is a missing instance rather than a panic; each component picks its storage through its =Component= instance (APECS's =Storage=), not an archetype table; =cmap=/=cfold= over tuple queries where bevy has =Query<(&A, &mut B), With<C>>=; structural changes are immediate and safe mid-query (iteration walks a snapshot) where bevy defers them through =Commands=; =Changed=/=Added= against each system's last-run tick, as in bevy |
 | =Res<T>= / =Events<E>= + =EventReader= | =Resource c= (a component stored =Global=, so =resource= accepts only types declared as resources) and =Events e=, double-buffered, each system reading what was sent since it last ran |
 | =bevy_picking= over entities | =Offler.Ecs.Picking=: =Pickable= bounds placed by =GlobalTransform=, keyed by =Entity=, into =Offler.Picking='s focus layer |
 | =Transform= / =GlobalTransform= / =ChildOf= components | =Offler.Ecs.Transform=, with =propagate= as the system; =Offler.Scene= remains for scenes that want a tree without a world |
@@ -378,8 +378,8 @@ render extraction into instanced batches.
   Component Vel where kind = Packed
   Component Bouncy where kind = Marker MkBouncy
 
-  W : List Type
-  W = [Pos, Vel, Bouncy, Instance Spark]
+  -- needs `import Language.Reflection` and `%language ElabReflection`
+  %runElab world "W" [`(Pos), `(Vel), `(Bouncy), `(Instance Spark)]
 
   move : System W
   move t w = cmap {q = (Pos, Vel)} w $ \(MkPos p, MkVel v) =>
@@ -390,10 +390,22 @@ render extraction into instanced batches.
 ** What the types hold
 
 - *The world's component set.* =World cs= is indexed by its component
-  list, and every query, write and accessor finds its store by an =Elem=
-  proof. A system that names a component the world was not built with has
-  no =Query= (or =Write=) instance and does not compile
+  types, and every query, write and accessor finds its store through a
+  =Has c cs= instance. A system that names a component the world was not
+  built with has no =Query= (or =Write=) instance and does not compile
   (=Tests/EcsMissingComponent.idr=, =Tests/EcsWriteMissing.idr=).
+- *Where each store is.* =world= lays the types out as a balanced tree
+  and generates one =Has= instance per type, as APECS's =makeWorld=
+  does: the type's path down the tree, and an erased proof that the path
+  leads to it. A wrong path does not compile, so the generator is checked
+  by the type checker rather than trusted, and run-time lookup walks the
+  same proof-carrying tree with no casts. Each use finds its instance in
+  one step, and each proof walks only the tree's height, so no world
+  needs =%auto_implicit_depth=. The list encoding this replaced searched
+  as deep as a type's position: past about 25 types the world could not
+  be built without raising the limit, and a module of 800 types took 309s
+  to check against 41s now, with run-time cost unchanged on node and
+  Chez.
 - *Column layouts.* A =Columnar= component writes its fields at positions
   =field= proves inside its declared width; a third float in a two-float
   slot is =LTE 3 2= unsolved (=Tests/EcsColumnOverrun.idr=). The

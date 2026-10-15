@@ -3,7 +3,10 @@
 -- cannot insert a component the world has no store for.
 module Tests.EcsWriteMissing
 
+import Language.Reflection
 import Offler.Ecs
+
+%language ElabReflection
 
 record Pos where
   constructor MkPos
@@ -16,5 +19,8 @@ record Vel where
 Component Pos where kind = Boxed
 Component Vel where kind = Boxed
 
-launch : World [Pos] -> IO ()
+%runElab world "PosOnly" [`(Pos)]
+
+
+launch : World PosOnly -> IO ()
 launch w = cmap {q = Pos} {r = Vel} w (\(MkPos p) => MkVel p)

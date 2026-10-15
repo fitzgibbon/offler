@@ -16,6 +16,7 @@ module Examples.Fountain.Scene
 
 import Data.IORef
 import Examples.Util
+import Language.Reflection
 import Offler.Camera
 import Offler.Color
 import Offler.Ecs
@@ -27,6 +28,8 @@ import Offler.Math
 import Offler.Mesh
 import Offler.Picking
 import Offler.Transform
+
+%language ElabReflection
 
 %hide Control.Linear.LIO.fromInteger
 
@@ -143,12 +146,13 @@ Resource Rate where initial = MkRate 2500.0
 Resource Owed where initial = MkOwed 0.0
 Resource Serial where initial = MkSerial 0
 
-||| Everything this world can hold. A system naming anything else does not
-||| compile.
-W : List Type
-W = [ Transform, GlobalTransform, ChildOf, Renderable, Pickable, Spinner
-    , Nozzle, Paused, Looks, Pos, Vel, Life, Hue, Bouncy, Instance Spark
-    , Rate, Owed, Serial, Events Event ]
+-- Everything this world can hold. A system naming anything else does not
+-- compile.
+%runElab world "W"
+  [ `(Transform), `(GlobalTransform), `(ChildOf), `(Renderable), `(Pickable),
+    `(Spinner), `(Nozzle), `(Paused), `(Looks), `(Pos), `(Vel), `(Life),
+    `(Hue), `(Bouncy), `(Instance Spark), `(Rate), `(Owed), `(Serial),
+    `(Events Event) ]
 
 maxEntities : Int
 maxEntities = 65536

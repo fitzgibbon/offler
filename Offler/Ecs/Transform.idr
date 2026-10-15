@@ -69,7 +69,7 @@ Component ChildOf where kind = Boxed
 
 ||| The components a world needs for `propagate`.
 public export
-Hierarchy : List Type -> Type
+Hierarchy : TypeTree -> Type
 Hierarchy cs = (Has Transform cs, Has GlobalTransform cs, Has ChildOf cs)
 
 ||| An entity's world matrix, computed up its parent chain. `Nothing` when
