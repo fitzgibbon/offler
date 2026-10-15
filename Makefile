@@ -50,7 +50,7 @@ SOURCES := $(filter-out $(GENERATED),$(wildcard Offler/*.idr Offler/Gfx/*.idr Of
                                      $(wildcard Examples/*.idr Examples/*/*.idr))
 
 # name (bundle/binary) -> module directory
-EXAMPLES := shapes lines swarm flat2d custom chime fountain
+EXAMPLES := shapes lines swarm flat2d custom chime fountain racer
 dir_shapes := Shapes
 dir_lines  := Lines
 dir_swarm  := Swarm
@@ -58,6 +58,7 @@ dir_flat2d := Flat2d
 dir_custom := Custom
 dir_chime  := Chime
 dir_fountain := Fountain
+dir_racer  := Racer
 
 BUNDLES  := $(foreach e,$(EXAMPLES),$(EXEC)/$(e)-gl2.js $(EXEC)/$(e)-gpu.js)
 NATIVES  := $(foreach e,$(EXAMPLES),$(EXEC)/$(e))
@@ -71,7 +72,7 @@ SITE := build/site
 all: web native
 
 web: $(BUNDLES)
-	@echo "open shapes.html, lines.html, swarm.html, flat2d.html, custom.html, chime.html or fountain.html -- no server needed"
+	@echo "open shapes.html, lines.html, swarm.html, flat2d.html, custom.html, chime.html, fountain.html or racer.html -- no server needed"
 
 # What a static host needs, and nothing else: the pages, and the bundles
 # they name. The tree is the repository's own layout rather than a flattened
@@ -112,7 +113,7 @@ lib: Offler/Shaders.idr Offler/Gfx/Config.idr
 # the test reports the opposite of what happened. Which is why what counts as
 # "it compiled" below is a clean exit *and* nothing Idris called an error:
 # the exit code alone is not something this can rest on.
-check: Examples/Assets.idr stackcheck globalscheck uploadcheck ecscheck
+check: Examples/Assets.idr stackcheck globalscheck uploadcheck ecscheck racercheck
 	@fail=0; for t in Tests/*.idr; do \
 	  want=$$(sed -n 's/^-- expect: //p' "$$t" | head -1); \
 	  if [ -z "$$want" ]; then \
@@ -173,6 +174,18 @@ ecscheck: Offler/Shaders.idr Offler/Gfx/Config.idr
 	  then echo "ok    ECS $$f loop is trampolined (__tailRec)"; \
 	  else echo "FAIL  ECS $$f loop lost its trampoline"; exit 1; fi; \
 	done
+
+# The racer's race, headless: eight CPU cars for three simulated minutes
+# through the game's own systems. Every car must keep lapping, every best
+# lap must be plausible, and missiles must be fired and land.
+.PHONY: racercheck
+racercheck: Offler/Shaders.idr Offler/Gfx/Config.idr Examples/Assets.idr
+	@$(IDRIS) -p linear --cg node -o racercheck Checks/RacerCheck.idr > /dev/null
+	@out=$$(node $(EXEC)/racercheck); \
+	  case "$$out" in \
+	    "race ok"*) echo "ok    Checks/RacerCheck.idr: $$out";; \
+	    *) echo "FAIL  RacerCheck said '$$out'"; exit 1;; \
+	  esac
 
 .PHONY: stackcheck
 stackcheck: Offler/Shaders.idr Offler/Gfx/Config.idr

@@ -44,7 +44,7 @@ honours.
 
 * The examples
 
-All seven run in a browser at [[https://fitzgibbon.github.io/offler/][fitzgibbon.github.io/offler]], where every push to
+All eight run in a browser at [[https://fitzgibbon.github.io/offler/][fitzgibbon.github.io/offler]], where every push to
 =main= republishes them: GitHub Actions builds the library, runs the
 checks, and publishes =make site= to Pages only if both pass.
 
@@ -63,16 +63,17 @@ button switches by navigating with =?r=webgpu=.
 | =Custom=   | =custom.html= | a user-defined material, end to end: a scanline hologram implementing the =Material= interface with its own WGSL and GLSL, =Blend=-composited through =Mask= cutout panels, all as scene-graph nodes over assets |
 | =Flat2d=   | =flat2d.html= | the 2D mode: forty sprite nodes under an orthographic camera, unlit assets, a frame is forty =setTransform=s |
 | =Fountain= | =fountain.html= | the ECS: two nozzles on a spinning arm -- a three-level =ChildOf= hierarchy propagated to =GlobalTransform= -- spray sparks that are each an entity, spawned from a nozzle's world matrix, integrated, bounced if =Bouncy=, aged and despawned from inside the query over them; thousands of spawns and despawns a second through generational indices, drawn as one instanced call straight from the sparks' =Instance= column. The rate is a resource, input arrives as =Events Event=, a click ray-picks a nozzle's =Pickable= bound and toggles a =Paused= tag, and the status counts =Added Life= -- one =Schedule= runs it all |
+| =Racer=    | =racer.html=  | everything at once, as a game: an isometric missile racer in the spirit of /Supercars 2/ -- you against seven CPU drivers on one figure-of-eight Catmull-Rom circuit, with a ramp that throws cars over the crossover, in an endless race. Cars are =ChildOf= hierarchies driven by =Pad= controls that input or AI writes; physics, collisions, lap timing, missiles and sparks are systems in one =Schedule=; input and sound cues travel as events; tyre walls and trees are instanced batches that change detection uploads once; click a car to follow it (picking); a Hologram banner from the Custom example over the start line, a retained-gizmo centre line, immediate-gizmo missile trails, procedural engine and effects, keyboard, gamepad and touch |
 | =Chime=    | =chime.html=  | input, audio and picking meeting: fourteen bars *ray-picked* under the pointer (hover walks the highlight, =PickDown= strikes — no screen-space bar arithmetic), struck by click, touch, keys, gamepad South or under pointer lock; one *procedural* pluck (=SoundPcm=, no asset files) pitched by =semitones= per bar and panned to the bar; wheel rides =setMasterGain=; ripples are immediate gizmos |
 
-All seven are verified rendering natively under Xvfb + lavapipe
+All eight are verified rendering natively under Xvfb + lavapipe
 (=scripts/headless-shot.sh=), and in the browser on *both* backends: WebGL2
 at 58 fps on hardware GL (the swarm at 50 000 bodies in one instanced
 call), and — new since the orrery, whose notes record headless WebGPU as
 presenting only a white canvas — browser WebGPU visually confirmed in
 headless Chrome 151 under SwiftShader, screenshots and all, driven over CDP
-with =--enable-unsafe-webgpu --enable-unsafe-swiftshader=; Fountain's
-keyboard and click paths too, by CDP input events.
+with =--enable-unsafe-webgpu --enable-unsafe-swiftshader=; Fountain's and
+the Racer's keyboard and click paths too, by CDP input events.
 
 * Layout of the library
 
@@ -712,9 +713,9 @@ the shell's Vulkan loader and takes lavapipe from the shell's own mesa.
 
 | target  | backend             | API        | verified                                   |
 |---------+---------------------+------------+--------------------------------------------|
-| browser | =--cg javascript=   | WebGL2     | yes — visually, all seven examples, 58 fps; chime's and fountain's input paths driven over CDP |
+| browser | =--cg javascript=   | WebGL2     | yes — visually, all eight examples, 58 fps; chime's, fountain's and the racer's input paths driven over CDP |
 | browser | =--cg javascript=   | WebGPU     | yes — visually, in headless Chrome 151 (SwiftShader now presents; the orrery-era white canvas is fixed upstream) |
-| Linux   | =--cg chez=         | wgpu-native (X11) | yes — visually, all seven examples, under lavapipe; chime struck via xdotool, mixer live |
+| Linux   | =--cg chez=         | wgpu-native (X11) | yes — visually, all eight examples, under lavapipe; chime struck via xdotool, mixer live |
 | Linux   | =--cg chez=         | wgpu-native (Wayland) | code path exists, unexercised          |
 | macOS   | =--cg chez=         | wgpu-native (Metal)   | builds and runs on aarch64 — all six examples start, draw and survive; not yet compared frame-for-frame against Linux |
 
@@ -798,6 +799,13 @@ the shell's Vulkan loader and takes lavapipe from the shell's own mesa.
   systems before and after a writer must see its changes and events
   exactly once, on the right frame; plus the =__tailRec= grep for both
   query loops.
+- =Checks/RacerCheck.idr=, run by =make check= — the racer's race,
+  headless: eight CPU cars for three simulated minutes through the game's
+  own systems. Every car must keep lapping, every best lap must be
+  plausible and not NaN, missiles must be fired and land, and the jump
+  must throw cars higher than its lip -- the AI, physics, walls,
+  collisions and lap timing checked without a frame drawn, from a first
+  step that, like a browser's first frame, takes no time.
 - =scripts/headless-shot.sh= — pixels from the native build without a GPU or
   a display.
 - The browser pages surface uncaught errors and unhandled rejections into a
