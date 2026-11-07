@@ -18,24 +18,29 @@ import Offler.Gfx.Array
 %default total
 
 %foreign "C:offler_i32_new,liboffler"
+         "Rust:offler_i32_new"
          "javascript:lambda:(n)=>new Int32Array(Math.max(n,1))"
 prim__i32new : Int -> PrimIO AnyPtr
 
 %foreign "scheme,chez:(lambda (a i) (foreign-ref 'integer-32 a (fx* i 4)))"
          "C:offler_i32_peek,liboffler"
+         "Rust:offler_i32_peek"
          "javascript:lambda:(a,i)=>a[i]"
 prim__i32peek : AnyPtr -> Int -> PrimIO Int
 
 %foreign "scheme,chez:(lambda (a i v) (foreign-set! 'integer-32 a (fx* i 4) v))"
          "C:offler_i32_poke,liboffler"
+         "Rust:offler_i32_poke"
          "javascript:lambda:(a,i,v)=>{a[i]=v}"
 prim__i32poke : AnyPtr -> Int -> Int -> PrimIO ()
 
 %foreign "C:offler_i32_copy,liboffler"
+         "Rust:offler_i32_copy"
          "javascript:lambda:(d,s,n)=>{d.set(s.subarray(0,n))}"
 prim__i32copy : AnyPtr -> AnyPtr -> Int -> PrimIO ()
 
 %foreign "C:offler_f32_move,liboffler"
+         "Rust:offler_f32_move"
          "javascript:lambda:(a,d,s,n)=>{a.copyWithin(d,s,s+n)}"
 prim__f32move : AnyPtr -> Int -> Int -> Int -> PrimIO ()
 

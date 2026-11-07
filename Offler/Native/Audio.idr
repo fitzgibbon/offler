@@ -10,27 +10,35 @@ import public Offler.Audio
 %default covering
 
 %foreign "C:offler_audio_init,liboffler"
+         "Rust:offler_audio_init"
 prim__init : PrimIO AnyPtr
 
 %foreign "C:offler_audio_load_pcm,liboffler"
+         "Rust:offler_audio_load_pcm"
 prim__loadPcm : AnyPtr -> Int -> AnyPtr -> Int -> PrimIO Int
 
 %foreign "C:offler_audio_load_wav,liboffler"
+         "Rust:offler_audio_load_wav"
 prim__loadWav : AnyPtr -> String -> PrimIO Int
 
 %foreign "C:offler_audio_play,liboffler"
+         "Rust:offler_audio_play"
 prim__play : AnyPtr -> Int -> Double -> Double -> Double -> Int -> PrimIO Int
 
 %foreign "C:offler_audio_voice_gen,liboffler"
+         "Rust:offler_audio_voice_gen"
 prim__voiceGen : AnyPtr -> Int -> PrimIO Int
 
 %foreign "C:offler_audio_set_voice,liboffler"
+         "Rust:offler_audio_set_voice"
 prim__setVoice : AnyPtr -> Int -> Int -> Double -> Double -> PrimIO ()
 
 %foreign "C:offler_audio_stop_voice,liboffler"
+         "Rust:offler_audio_stop_voice"
 prim__stopVoice : AnyPtr -> Int -> Int -> PrimIO ()
 
 %foreign "C:offler_audio_set_master,liboffler"
+         "Rust:offler_audio_set_master"
 prim__setMaster : AnyPtr -> Double -> PrimIO ()
 
 public export

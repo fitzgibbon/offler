@@ -14,6 +14,16 @@
           # into .dev while the .so stays in the default output. SDL3 is split
           # the same way but does ship sdl3.pc, so pkg-config finds it.
           wgpu = pkgs.wgpu-native;
+          rustNativeLibs = with pkgs; [
+            alsa-lib
+            udev
+            libxkbcommon
+            wayland
+            libx11
+            libxcursor
+            libxrandr
+            libxi
+          ];
         in {
           default = pkgs.mkShell {
             packages = with pkgs; [
@@ -35,7 +45,11 @@
               xvfb
               imagemagick
               xdotool
-            ];
+            ]
+            # The Rust native layer (rust/): cpal needs ALSA's headers at build
+            # time and gilrs needs libudev; winit dlopens xkbcommon, Wayland
+            # and the X11 libraries at run time. macOS needs none of these.
+            ++ pkgs.lib.optionals pkgs.stdenv.isLinux rustNativeLibs;
 
             # Consumed by the Makefile, which falls back to WGPU_PREFIX or
             # pkg-config when these are unset.
@@ -48,6 +62,11 @@
               # the library path it reports "vulkan drivers/libraries could not
               # be loaded" and finds no adapter at all.
               export LD_LIBRARY_PATH="${pkgs.vulkan-loader}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+            '' + pkgs.lib.optionalString pkgs.stdenv.isLinux ''
+              # The Rust layer's winit loads its windowing libraries with
+              # dlopen rather than linking them, so they must be findable too.
+              export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath rustNativeLibs}:$LD_LIBRARY_PATH"
+            '' + ''
 
               echo "$(idris2 --version)"
               echo
@@ -55,6 +74,7 @@
               echo "  make web        just the bundles; then open examples/*/index.html"
               echo "  make native     just the binaries"
               echo "  make check      the programs that must fail to compile"
+              echo "  make rust-native  every example through the Idris 2 Rust backend"
               echo
               echo "For a GPU-less run of a native example:"
               echo "  export VK_ICD_FILENAMES=\$(ls /run/opengl-driver/share/vulkan/icd.d/lvp_icd.*.json 2>/dev/null | head -1)"

@@ -5,6 +5,9 @@
 #   make site     the pages and their bundles, laid out for a static host
 #   make native   just the binaries
 #   make lib      type-check and build the library alone (offler.ipkg)
+#   make rust-native  the binaries again, through the Idris 2 Rust backend,
+#                 on the Rust crate in rust/ rather than the C shim
+#   make rust-crate   build, lint and test that crate on its own
 #   make check    the programs that must fail to compile
 #   make clean
 #
@@ -66,7 +69,7 @@ SHIMS    := $(foreach e,$(EXAMPLES),$(EXEC)/$(e)_app/liboffler.$(DLL))
 
 SITE := build/site
 
-.PHONY: all web site native lib run-% check clean
+.PHONY: all web site native lib run-% check clean rust-native rust-crate rust-smoke
 .DEFAULT_GOAL := all
 
 all: web native
@@ -286,6 +289,40 @@ $(EXEC)/$(1)_app/liboffler.$(DLL): build/liboffler.$(DLL) $(EXEC)/$(1)
 endef
 
 $(foreach e,$(EXAMPLES),$(eval $(call EXAMPLE_template,$(e),$(dir_$(e)))))
+
+# --------------------------------------------------------- the Rust backend
+
+# The Idris 2 Rust backend resolves `%foreign "Rust:..."` against one Cargo
+# package, found through IDRIS2_RUST_FOREIGN: rust/, which does with wgpu,
+# winit, gilrs and rodio what csrc/ does with wgpu-native and SDL3. Each
+# binary is self-contained, so there is no app directory to populate.
+IDRIS2_RS    ?= $(HOME)/src/idris2-rs/build/exec/idris2-rs
+RUST_FOREIGN := $(abspath rust)
+RUST_EXEC    := build/rust
+RUST_SOURCES := rust/Cargo.toml rust/Cargo.lock $(wildcard rust/src/*.rs)
+RUST_NATIVES := $(foreach e,$(EXAMPLES),$(RUST_EXEC)/$(e))
+
+rust-native: $(RUST_NATIVES)
+	@echo "built $(RUST_NATIVES)"
+
+define RUST_template
+.PHONY: rust-$(1)
+rust-$(1): $(RUST_EXEC)/$(1)
+
+$(RUST_EXEC)/$(1): Offler/Shaders.idr Offler/Gfx/Config.idr Examples/Assets.idr $(SOURCES) $(RUST_SOURCES)
+	IDRIS2_RUST_FOREIGN=$(RUST_FOREIGN) $(IDRIS2_RS) -p linear --build-dir build/rust-ttc --output-dir $(RUST_EXEC) -o $(1) Examples/$(2)/Main.idr
+	@test -f $$@ || { echo "$$@ was not produced" >&2; exit 1; }
+endef
+
+$(foreach e,$(EXAMPLES),$(eval $(call RUST_template,$(e),$(dir_$(e)))))
+
+rust-crate:
+	cd rust && cargo build --release && cargo clippy --all-targets -- -D warnings && cargo test
+
+# Every adapter function driven for a few hundred frames under Xvfb and
+# lavapipe, with a screenshot; see scripts/rust-smoke.sh.
+rust-smoke:
+	./scripts/rust-smoke.sh build/rust-smoke.png
 
 # ------------------------------------------------------------------- the shim
 

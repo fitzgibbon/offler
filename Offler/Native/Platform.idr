@@ -16,54 +16,71 @@ import Offler.Gfx.Platform
 %default covering
 
 %foreign "C:offler_poll,liboffler"
+         "Rust:offler_poll"
 prim__poll : AnyPtr -> PrimIO Int
 
 %foreign "C:offler_event_key,liboffler"
+         "Rust:offler_event_key"
 prim__eventKey : AnyPtr -> PrimIO String
 
 %foreign "C:offler_event_x,liboffler"
+         "Rust:offler_event_x"
 prim__eventX : AnyPtr -> PrimIO Double
 
 %foreign "C:offler_event_y,liboffler"
+         "Rust:offler_event_y"
 prim__eventY : AnyPtr -> PrimIO Double
 
 %foreign "C:offler_event_wheel,liboffler"
+         "Rust:offler_event_wheel"
 prim__eventWheel : AnyPtr -> PrimIO Double
 
 %foreign "C:offler_event_button,liboffler"
+         "Rust:offler_event_button"
 prim__eventButton : AnyPtr -> PrimIO Int
 
 %foreign "C:offler_event_dx,liboffler"
+         "Rust:offler_event_dx"
 prim__eventDX : AnyPtr -> PrimIO Double
 
 %foreign "C:offler_event_dy,liboffler"
+         "Rust:offler_event_dy"
 prim__eventDY : AnyPtr -> PrimIO Double
 
 %foreign "C:offler_event_id,liboffler"
+         "Rust:offler_event_id"
 prim__eventId : AnyPtr -> PrimIO Int
 
 %foreign "C:offler_gamepads,liboffler"
+         "Rust:offler_gamepads"
 prim__gamepads : AnyPtr -> PrimIO String
 
 %foreign "C:offler_set_pointer_lock,liboffler"
+         "Rust:offler_set_pointer_lock"
 prim__setPointerLock : AnyPtr -> Int -> PrimIO ()
 
 %foreign "C:offler_set_cursor_visible,liboffler"
+         "Rust:offler_set_cursor_visible"
 prim__setCursorVisible : AnyPtr -> Int -> PrimIO ()
 
 %foreign "C:offler_surface_w,liboffler"
+         "Rust:offler_surface_w"
 prim__surfaceW : AnyPtr -> PrimIO Double
 
 %foreign "C:offler_surface_h,liboffler"
+         "Rust:offler_surface_h"
 prim__surfaceH : AnyPtr -> PrimIO Double
 
 %foreign "C:offler_time,liboffler"
+         "Rust:offler_time"
 prim__time : AnyPtr -> PrimIO Double
 
 %foreign "C:offler_set_title,liboffler"
+         "Rust:offler_set_title"
 prim__setTitle : AnyPtr -> String -> PrimIO ()
 
 %foreign "C:offler_quit,liboffler"
+         "Rust:offler_quit"
 prim__quit : AnyPtr -> PrimIO ()
 
 public export

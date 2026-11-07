@@ -33,71 +33,93 @@ import Offler.Transform
 ||| the gizmo pipeline's generated WGSL and specs, both vertex specs, and
 ||| the proved sizes.
 %foreign "C:offler_init,liboffler"
+         "Rust:offler_init"
 prim__init : String -> String -> String -> String -> Int
           -> String -> Int -> String -> Int
           -> Int -> Int -> Int -> Int -> PrimIO AnyPtr
 
 %foreign "C:offler_register_material,liboffler"
+         "Rust:offler_register_material"
 prim__register : AnyPtr -> String -> String -> Int -> Int -> PrimIO Int
 
 %foreign "C:offler_create_instances,liboffler"
+         "Rust:offler_create_instances"
 prim__createInstances : AnyPtr -> PrimIO Int
 
 %foreign "C:offler_write_instances,liboffler"
+         "Rust:offler_write_instances"
 prim__writeInstances : AnyPtr -> Int -> AnyPtr -> Int -> Int -> PrimIO ()
 
 %foreign "C:offler_draw_instanced,liboffler"
+         "Rust:offler_draw_instanced"
 prim__drawInstanced : AnyPtr -> Int -> Int -> Int -> Int -> Int -> PrimIO ()
 
 %foreign "C:offler_add_asset,liboffler"
+         "Rust:offler_add_asset"
 prim__addAsset : AnyPtr -> Int -> Int -> Int -> Int -> Int -> Int -> PrimIO Int
 
 %foreign "C:offler_update_asset,liboffler"
+         "Rust:offler_update_asset"
 prim__updateAsset : AnyPtr -> Int -> Int -> Int -> Int -> Int -> PrimIO ()
 
 %foreign "C:offler_upload_mat_slot,liboffler"
+         "Rust:offler_upload_mat_slot"
 prim__uploadMatSlot : AnyPtr -> AnyPtr -> Int -> Int -> PrimIO ()
 
 %foreign "C:offler_upload_obj_page,liboffler"
+         "Rust:offler_upload_obj_page"
 prim__uploadObjPage : AnyPtr -> Int -> AnyPtr -> Int -> PrimIO ()
 
 %foreign "C:offler_texture_file,liboffler"
+         "Rust:offler_texture_file"
 prim__textureFile : AnyPtr -> String -> PrimIO Int
 
 %foreign "C:offler_texture_b64,liboffler"
+         "Rust:offler_texture_b64"
 prim__textureB64 : AnyPtr -> String -> PrimIO Int
 
 %foreign "C:offler_aspect,liboffler"
+         "Rust:offler_aspect"
 prim__aspect : AnyPtr -> PrimIO Double
 
 %foreign "C:offler_create_mesh,liboffler"
+         "Rust:offler_create_mesh"
 prim__createMesh : AnyPtr -> AnyPtr -> Int -> Int -> PrimIO Int
 
 %foreign "C:offler_create_mesh_indexed,liboffler"
+         "Rust:offler_create_mesh_indexed"
 prim__createMeshIndexed : AnyPtr -> AnyPtr -> Int -> AnyPtr -> Int -> PrimIO Int
 
 %foreign "C:offler_mesh_gen,liboffler"
+         "Rust:offler_mesh_gen"
 prim__meshGen : AnyPtr -> Int -> PrimIO Int
 
 %foreign "C:offler_free_mesh,liboffler"
+         "Rust:offler_free_mesh"
 prim__freeMesh : AnyPtr -> Int -> Int -> PrimIO ()
 
 %foreign "C:offler_set_lines,liboffler"
+         "Rust:offler_set_lines"
 prim__setLines : AnyPtr -> AnyPtr -> Int -> Int -> PrimIO ()
 
 %foreign "C:offler_draw_lines,liboffler"
+         "Rust:offler_draw_lines"
 prim__drawLines : AnyPtr -> Int -> PrimIO ()
 
 %foreign "C:offler_begin,liboffler"
+         "Rust:offler_begin"
 prim__begin : AnyPtr -> AnyPtr -> Double -> Double -> Double -> PrimIO Int
 
 %foreign "C:offler_draw,liboffler"
+         "Rust:offler_draw"
 prim__draw : AnyPtr -> Int -> Int -> Int -> Int -> Int -> Double -> PrimIO ()
 
 %foreign "C:offler_draw_slices,liboffler"
+         "Rust:offler_draw_slices"
 prim__drawSlices : AnyPtr -> Int -> Int -> Int -> Int -> Int -> Int -> Double -> PrimIO ()
 
 %foreign "C:offler_end,liboffler"
+         "Rust:offler_end"
 prim__end : AnyPtr -> PrimIO ()
 
 public export

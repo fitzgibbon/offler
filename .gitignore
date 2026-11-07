@@ -5,3 +5,4 @@ Offler/Gfx/Config.idr
 *.dylib
 result
 Examples/Assets.idr
+rust/target/

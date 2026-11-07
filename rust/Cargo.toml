@@ -1,0 +1,22 @@
+[package]
+name = "idris2-rs-foreign"
+version = "0.1.0"
+edition = "2024"
+description = "offler's native layer for the Idris 2 Rust backend: wgpu, winit, gilrs and rodio"
+publish = false
+
+[lib]
+name = "idris2_rs_foreign"
+path = "src/lib.rs"
+
+[dependencies]
+base64 = "=0.23.1"
+bytemuck = "=1.25.2"
+gilrs = "=0.11.2"
+image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg", "bmp", "gif", "tga"] }
+pollster = "=1.0.1"
+rodio = { version = "=0.23.0", default-features = false, features = ["playback", "wav"] }
+wgpu = "=30.0.1"
+winit = "=0.30.13"
+
+[workspace]

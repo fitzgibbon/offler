@@ -147,16 +147,19 @@ unsafeAt : (i : Int) -> At cap w
 unsafeAt = MkAt
 
 %foreign "C:offler_f32_new,liboffler"
+         "Rust:offler_f32_new"
          "javascript:lambda:(n)=>new Float32Array(n)"
 prim__new : Int -> PrimIO AnyPtr
 
 %foreign "scheme,chez:(lambda (a i v) (foreign-set! 'float a (fx* i 4) v))"
          "C:offler_f32_poke,liboffler"
+         "Rust:offler_f32_poke"
          "javascript:lambda:(a,i,v)=>{a[i]=v}"
 prim__poke : AnyPtr -> Int -> Double -> PrimIO ()
 
 %foreign "scheme,chez:(lambda (a o x y z w) (foreign-set! 'float a (fx* o 4) x) (foreign-set! 'float a (fx* (fx+ o 1) 4) y) (foreign-set! 'float a (fx* (fx+ o 2) 4) z) (foreign-set! 'float a (fx* (fx+ o 3) 4) w))"
          "C:offler_f32_poke4,liboffler"
+         "Rust:offler_f32_poke4"
          "javascript:lambda:(a,o,x,y,z,w)=>{a[o]=x;a[o+1]=y;a[o+2]=z;a[o+3]=w}"
 prim__poke4 : AnyPtr -> Int -> Double -> Double -> Double -> Double -> PrimIO ()
 
@@ -165,11 +168,13 @@ prim__poke4 : AnyPtr -> Int -> Double -> Double -> Double -> Double -> PrimIO ()
 ||| affordable to build, at four padded vertices a call.
 %foreign "scheme,chez:(lambda (a o x0 x1 x2 x3 x4 x5 x6 x7 x8 x9 x10 x11 x12 x13 x14 x15) (foreign-set! 'float a (fx* (fx+ o 0) 4) x0) (foreign-set! 'float a (fx* (fx+ o 1) 4) x1) (foreign-set! 'float a (fx* (fx+ o 2) 4) x2) (foreign-set! 'float a (fx* (fx+ o 3) 4) x3) (foreign-set! 'float a (fx* (fx+ o 4) 4) x4) (foreign-set! 'float a (fx* (fx+ o 5) 4) x5) (foreign-set! 'float a (fx* (fx+ o 6) 4) x6) (foreign-set! 'float a (fx* (fx+ o 7) 4) x7) (foreign-set! 'float a (fx* (fx+ o 8) 4) x8) (foreign-set! 'float a (fx* (fx+ o 9) 4) x9) (foreign-set! 'float a (fx* (fx+ o 10) 4) x10) (foreign-set! 'float a (fx* (fx+ o 11) 4) x11) (foreign-set! 'float a (fx* (fx+ o 12) 4) x12) (foreign-set! 'float a (fx* (fx+ o 13) 4) x13) (foreign-set! 'float a (fx* (fx+ o 14) 4) x14) (foreign-set! 'float a (fx* (fx+ o 15) 4) x15))"
          "C:offler_f32_poke16,liboffler"
+         "Rust:offler_f32_poke16"
          "javascript:lambda:(a,o,x0, x1, x2, x3, x4, x5, x6, x7, x8, x9, x10, x11, x12, x13, x14, x15)=>{a[o+0]=x0;a[o+1]=x1;a[o+2]=x2;a[o+3]=x3;a[o+4]=x4;a[o+5]=x5;a[o+6]=x6;a[o+7]=x7;a[o+8]=x8;a[o+9]=x9;a[o+10]=x10;a[o+11]=x11;a[o+12]=x12;a[o+13]=x13;a[o+14]=x14;a[o+15]=x15}"
 prim__poke16 : AnyPtr -> Int -> Double -> Double -> Double -> Double -> Double -> Double -> Double -> Double -> Double -> Double -> Double -> Double -> Double -> Double -> Double -> Double -> PrimIO ()
 
 %foreign "scheme,chez:(lambda (a i) (foreign-ref 'float a (fx* i 4)))"
          "C:offler_f32_peek,liboffler"
+         "Rust:offler_f32_peek"
          "javascript:lambda:(a,i)=>a[i]"
 prim__peek : AnyPtr -> Int -> PrimIO Double
 
@@ -277,10 +282,12 @@ vertsFloats (MkVerts _ _ f) = f
 -- Index data
 
 %foreign "C:offler_u32_new,liboffler"
+         "Rust:offler_u32_new"
          "javascript:lambda:(n)=>new Uint32Array(n)"
 prim__u32new : Int -> PrimIO AnyPtr
 
 %foreign "C:offler_u32_poke,liboffler"
+         "Rust:offler_u32_poke"
          "javascript:lambda:(a,i,v)=>{a[i]=v}"
 prim__u32poke : AnyPtr -> Int -> Int -> PrimIO ()
 
