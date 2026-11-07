@@ -295,8 +295,9 @@ $(foreach e,$(EXAMPLES),$(eval $(call EXAMPLE_template,$(e),$(dir_$(e)))))
 # The Idris 2 Rust backend resolves `%foreign "Rust:..."` against one Cargo
 # package, found through IDRIS2_RUST_FOREIGN: rust/, which does with wgpu,
 # winit, gilrs and rodio what csrc/ does with wgpu-native and SDL3. Each
-# binary is self-contained, so there is no app directory to populate.
-IDRIS2_RS    ?= $(HOME)/src/idris2-rs/build/exec/idris2-rs
+# binary is self-contained, so there is no app directory to populate. The
+# backend's scripts/idris2-rs wrapper sets up its package path and runtime.
+IDRIS2_RS    ?= $(HOME)/src/idris2-rs/scripts/idris2-rs
 RUST_FOREIGN := $(abspath rust)
 RUST_EXEC    := build/rust
 RUST_SOURCES := rust/Cargo.toml rust/Cargo.lock $(wildcard rust/src/*.rs)
