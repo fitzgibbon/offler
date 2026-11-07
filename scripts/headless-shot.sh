@@ -1,6 +1,7 @@
 #!/usr/bin/env sh
 # Screenshot a native example under Xvfb with lavapipe as the Vulkan device.
 # Usage: headless-shot.sh <example> <outfile.png> [seconds]
+# EXEC picks the binaries: build/exec (Chez, default) or build/rust (Rust backend).
 #
 # The traps this script exists to remember: SDL3 prefers Wayland whenever
 # WAYLAND_DISPLAY is set, regardless of DISPLAY, so a run that only sets
@@ -11,6 +12,7 @@ set -e
 EXAMPLE=$1
 OUT=$2
 WAIT=${3:-6}
+EXEC=${EXEC:-build/exec}
 
 unset WAYLAND_DISPLAY
 export SDL_VIDEODRIVER=x11
@@ -23,7 +25,9 @@ export DISPLAY=:99
 # surfaces as a validation error from wgpuInstanceCreateSurface rather than
 # anything about drivers. So keep only the shell's Vulkan loader, and take
 # lavapipe from the shell's own mesa when it has one.
-LD_LIBRARY_PATH=$(printf '%s' "${LD_LIBRARY_PATH:-}" | tr ':' '\n' | grep vulkan-loader | paste -sd: -)
+# The Rust build's winit also dlopens X11 and xkbcommon.
+LD_LIBRARY_PATH=$(printf '%s' "${LD_LIBRARY_PATH:-}" | tr ':' '\n' \
+  | grep -E 'vulkan-loader|libxkbcommon|libx11|libxcursor|libxrandr|libxi' | paste -sd: -)
 export LD_LIBRARY_PATH
 if [ -z "${VK_ICD_FILENAMES:-}" ]; then
   for d in $(printf '%s' "$PATH" | tr ':' ' '); do
@@ -39,7 +43,7 @@ XVFB_PID=$!
 trap 'kill $XVFB_PID 2>/dev/null || true' EXIT
 sleep 1
 
-"./build/exec/$EXAMPLE" &
+"./$EXEC/$EXAMPLE" &
 APP_PID=$!
 sleep "$WAIT"
 
